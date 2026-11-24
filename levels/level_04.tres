@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="LevelData" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_nogss"]
+
+[resource]
+script = ExtResource("1_nogss")
+title = "Locked"
+tip = "Free the key arrow first to open the lock."
+guided_moves = 1
+layout = "^ < . .
+. . v .
+> . . ^
+. . . ."
+dependencies = Array[Vector4i]([Vector4i(0, 0, 2, 1)])

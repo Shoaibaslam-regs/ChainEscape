@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="LevelData" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_r0qmw"]
+
+[resource]
+script = ExtResource("1_r0qmw")
+title = "Crossroads"
+tip = "Look for the arrow that can go first."
+layout = ". ^ . < .
+> . ^ . v
+. < . > .
+^ . v . >
+. > . ^ ."

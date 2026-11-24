@@ -1,0 +1,145 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/ui/achievement_panel.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/brand/achievement_badge.svg" id="2_badge"]
+[ext_resource type="Script" path="res://scenes/ui/metal_label.gd" id="3_metal"]
+[ext_resource type="PackedScene" path="res://scenes/ui/screen_background.tscn" id="4_background"]
+
+[node name="AchievementPanel" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="ScreenBackground" parent="." instance=ExtResource("4_background")]
+layout_mode = 1
+mouse_filter = 0
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 48
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 48
+theme_override_constants/margin_bottom = 48
+
+[node name="Layout" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Badge" type="TextureRect" parent="Margin/Layout"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 190)
+layout_mode = 2
+texture = ExtResource("2_badge")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Overline" type="Label" parent="Margin/Layout"]
+layout_mode = 2
+theme_type_variation = &"OverlineLabel"
+theme_override_colors/font_color = Color(0.271, 0.761, 0.694, 1)
+text = "ACHIEVEMENT UNLOCKED"
+horizontal_alignment = 1
+
+[node name="Title" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_font_sizes/font_size = 60
+text = "LOCKSMITH"
+horizontal_alignment = 1
+text_overrun_behavior = 3
+script = ExtResource("3_metal")
+
+[node name="Description" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"CaptionLabel"
+theme_override_font_sizes/font_size = 30
+text = "Break 100 chains"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="NextTierCard" type="PanelContainer" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"CardPanel"
+
+[node name="Content" type="VBoxContainer" parent="Margin/Layout/NextTierCard"]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Header" type="HBoxContainer" parent="Margin/Layout/NextTierCard/Content"]
+layout_mode = 2
+
+[node name="NextTierName" type="Label" parent="Margin/Layout/NextTierCard/Content/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Next: Master Locksmith"
+
+[node name="NextTierCount" type="Label" parent="Margin/Layout/NextTierCard/Content/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"CaptionLabel"
+text = "100 / 250"
+
+[node name="NextTierBar" type="ProgressBar" parent="Margin/Layout/NextTierCard/Content"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 16)
+layout_mode = 2
+show_percentage = false
+
+[node name="NearbyHeading" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"OverlineLabel"
+theme_override_colors/font_color = Color(0.639, 0.675, 0.741, 1)
+text = "CLOSE TO UNLOCKING"
+
+[node name="NearbyList" type="VBoxContainer" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 14
+
+[node name="ContinueButton" type="Button" parent="Margin/Layout"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 148)
+layout_mode = 2
+theme_type_variation = &"PrimaryButton"
+
+[node name="ContinueText" type="VBoxContainer" parent="Margin/Layout/ContinueButton"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/separation = -6
+alignment = 1
+
+[node name="ContinueLabel" type="Label" parent="Margin/Layout/ContinueButton/ContinueText"]
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_color = Color(0.165, 0.114, 0.02, 1)
+theme_override_font_sizes/font_size = 42
+text = "CONTINUE"
+horizontal_alignment = 1
+
+[node name="ContinueLevelLabel" type="Label" parent="Margin/Layout/ContinueButton/ContinueText"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"OverlineLabel"
+theme_override_colors/font_color = Color(0.165, 0.114, 0.02, 0.75)
+text = "LEVEL 2"
+horizontal_alignment = 1

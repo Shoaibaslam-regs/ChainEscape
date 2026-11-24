@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="LevelCatalog" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_ciffw"]
+[ext_resource type="Resource" path="res://levels/level_01.tres" id="2_hlgup"]
+[ext_resource type="Resource" path="res://levels/level_02.tres" id="3_f5oma"]
+[ext_resource type="Resource" path="res://levels/level_03.tres" id="4_j1q5l"]
+[ext_resource type="Resource" path="res://levels/level_04.tres" id="5_01fth"]
+[ext_resource type="Resource" path="res://levels/level_05.tres" id="6_irp2d"]
+[ext_resource type="Resource" path="res://levels/level_06.tres" id="7_4ba5r"]
+[ext_resource type="Resource" path="res://levels/level_07.tres" id="8_u0u45"]
+[ext_resource type="Resource" path="res://levels/level_08.tres" id="9_4svcw"]
+[ext_resource type="Script" path="res://scripts/levels/level_catalog.gd" id="10_t86lo"]
+
+[resource]
+script = ExtResource("10_t86lo")
+levels = Array[ExtResource("1_ciffw")]([ExtResource("2_hlgup"), ExtResource("3_f5oma"), ExtResource("4_j1q5l"), ExtResource("5_01fth"), ExtResource("6_irp2d"), ExtResource("7_4ba5r"), ExtResource("8_u0u45"), ExtResource("9_4svcw")])

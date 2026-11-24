@@ -1,0 +1,253 @@
+[gd_scene load_steps=18 format=3]
+
+[ext_resource type="Script" path="res://scenes/screens/game_screen.gd" id="1_game"]
+[ext_resource type="Script" path="res://scenes/board/board_view.gd" id="2_board"]
+[ext_resource type="PackedScene" path="res://scenes/ui/screen_background.tscn" id="3_background"]
+[ext_resource type="Texture2D" path="res://assets/icons/pause.svg" id="4_pause"]
+[ext_resource type="Texture2D" path="res://assets/icons/restart.svg" id="5_restart"]
+[ext_resource type="PackedScene" path="res://scenes/ui/pause_panel.tscn" id="6_pause_panel"]
+[ext_resource type="PackedScene" path="res://scenes/ui/complete_panel.tscn" id="7_complete_panel"]
+[ext_resource type="PackedScene" path="res://scenes/ui/achievement_panel.tscn" id="8_achievement_panel"]
+[ext_resource type="Script" path="res://scenes/ui/praise_popup.gd" id="9_praise"]
+[ext_resource type="PackedScene" path="res://scenes/ui/twist_popup.tscn" id="10_twist_popup"]
+[ext_resource type="PackedScene" path="res://scenes/ui/out_of_moves_panel.tscn" id="11_out_of_moves"]
+[ext_resource type="Texture2D" path="res://assets/icons/stat_arrow.svg" id="13_stat_arrow"]
+[ext_resource type="Texture2D" path="res://assets/icons/stat_lock.svg" id="14_stat_lock"]
+[ext_resource type="Texture2D" path="res://assets/icons/key_full.svg" id="15_key_full"]
+
+[node name="GameScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_game")
+
+[node name="ScreenBackground" parent="." instance=ExtResource("3_background")]
+layout_mode = 1
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 40
+theme_override_constants/margin_top = 48
+theme_override_constants/margin_right = 40
+theme_override_constants/margin_bottom = 56
+
+[node name="Layout" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 24
+
+[node name="TopBar" type="HBoxContainer" parent="Margin/Layout"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="PauseButton" type="Button" parent="Margin/Layout/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(88, 88)
+layout_mode = 2
+tooltip_text = "Pause"
+size_flags_vertical = 4
+theme_type_variation = &"IconButton"
+icon = ExtResource("4_pause")
+icon_alignment = 1
+expand_icon = true
+
+[node name="Heading" type="VBoxContainer" parent="Margin/Layout/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = -4
+alignment = 1
+
+[node name="Overline" type="Label" parent="Margin/Layout/TopBar/Heading"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"OverlineLabel"
+horizontal_alignment = 1
+text_overrun_behavior = 3
+
+[node name="LevelTitle" type="Label" parent="Margin/Layout/TopBar/Heading"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"TitleLabel"
+text = "LEVEL 1"
+horizontal_alignment = 1
+
+[node name="RestartButton" type="Button" parent="Margin/Layout/TopBar"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(88, 88)
+layout_mode = 2
+tooltip_text = "Restart level"
+size_flags_vertical = 4
+theme_type_variation = &"IconButton"
+icon = ExtResource("5_restart")
+icon_alignment = 1
+expand_icon = true
+
+[node name="StatusRow" type="HBoxContainer" parent="Margin/Layout"]
+custom_minimum_size = Vector2(0, 48)
+layout_mode = 2
+theme_override_constants/separation = 26
+alignment = 1
+
+[node name="ArrowsGroup" type="HBoxContainer" parent="Margin/Layout/StatusRow"]
+layout_mode = 2
+tooltip_text = "Arrows left"
+theme_override_constants/separation = 10
+
+[node name="ArrowsIcon" type="TextureRect" parent="Margin/Layout/StatusRow/ArrowsGroup"]
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("13_stat_arrow")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="ArrowsLabel" type="Label" parent="Margin/Layout/StatusRow/ArrowsGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"HeadingLabel"
+theme_override_colors/font_color = Color(0.788, 0.816, 0.863, 1)
+theme_override_font_sizes/font_size = 30
+text = "3"
+
+[node name="LocksDivider" type="ColorRect" parent="Margin/Layout/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(2, 28)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(1, 1, 1, 0.12)
+
+[node name="LocksGroup" type="HBoxContainer" parent="Margin/Layout/StatusRow"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Locked arrows"
+theme_override_constants/separation = 10
+
+[node name="LocksIcon" type="TextureRect" parent="Margin/Layout/StatusRow/LocksGroup"]
+custom_minimum_size = Vector2(30, 30)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("14_stat_lock")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="LocksLabel" type="Label" parent="Margin/Layout/StatusRow/LocksGroup"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"HeadingLabel"
+theme_override_colors/font_color = Color(0.788, 0.816, 0.863, 1)
+theme_override_font_sizes/font_size = 30
+text = "0"
+
+[node name="MovesDivider" type="ColorRect" parent="Margin/Layout/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(2, 28)
+layout_mode = 2
+size_flags_vertical = 4
+color = Color(1, 1, 1, 0.12)
+
+[node name="Pips" type="HBoxContainer" parent="Margin/Layout/StatusRow"]
+unique_name_in_owner = true
+layout_mode = 2
+tooltip_text = "Wrong moves left"
+theme_override_constants/separation = 4
+
+[node name="Key1" type="TextureRect" parent="Margin/Layout/StatusRow/Pips"]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("15_key_full")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Key2" type="TextureRect" parent="Margin/Layout/StatusRow/Pips"]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("15_key_full")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Key3" type="TextureRect" parent="Margin/Layout/StatusRow/Pips"]
+custom_minimum_size = Vector2(40, 40)
+layout_mode = 2
+size_flags_vertical = 4
+texture = ExtResource("15_key_full")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Message" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"CaptionLabel"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="TipLabel" type="Label" parent="Margin/Layout"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+theme_type_variation = &"CaptionLabel"
+theme_override_colors/font_color = Color(0.961, 0.843, 0.604, 0.9)
+theme_override_font_sizes/font_size = 30
+text = "Tap an arrow to send it off the board."
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="BoardView" type="Control" parent="Margin/Layout"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("2_board")
+
+[node name="PraisePopup" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.4
+anchor_right = 0.5
+anchor_bottom = 0.4
+offset_left = -340.0
+offset_top = -60.0
+offset_right = 340.0
+offset_bottom = 60.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_type_variation = &"DisplayLabel"
+theme_override_colors/font_outline_color = Color(0.043, 0.047, 0.063, 1)
+theme_override_constants/outline_size = 18
+theme_override_font_sizes/font_size = 92
+text = "NICE!"
+horizontal_alignment = 1
+vertical_alignment = 1
+script = ExtResource("9_praise")
+
+[node name="TwistPopup" parent="." instance=ExtResource("10_twist_popup")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="OutOfMovesPanel" parent="." instance=ExtResource("11_out_of_moves")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="PausePanel" parent="." instance=ExtResource("6_pause_panel")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="CompletePanel" parent="." instance=ExtResource("7_complete_panel")]
+unique_name_in_owner = true
+layout_mode = 1
+
+[node name="AchievementPanel" parent="." instance=ExtResource("8_achievement_panel")]
+unique_name_in_owner = true
+layout_mode = 1

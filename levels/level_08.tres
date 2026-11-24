@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="LevelData" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_kjwko"]
+
+[resource]
+script = ExtResource("1_kjwko")
+title = "Final Escape"
+layout = "> ^ . ^ . v
+^ . > . ^ .
+. < v . v <
+v . . ^ . .
+> ^ v . v >
+. . v . < .
+< < . v . >"
+dependencies = Array[Vector4i]([Vector4i(1, 0, 2, 1), Vector4i(5, 4, 4, 4), Vector4i(2, 2, 1, 2), Vector4i(3, 3, 4, 2), Vector4i(2, 4, 3, 3), Vector4i(3, 6, 2, 5)])

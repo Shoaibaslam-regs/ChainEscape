@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="LevelData" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_6exii"]
+
+[resource]
+script = ExtResource("1_6exii")
+title = "Make Way"
+tip = "An arrow can only leave when its path is clear."
+guided_moves = 1
+layout = "> . v .
+. . . <
+^ > . .
+. . < <"

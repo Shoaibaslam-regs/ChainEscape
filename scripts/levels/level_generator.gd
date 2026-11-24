@@ -1,0 +1,396 @@
+class_name LevelGenerator
+extends RefCounted
+## Creates levels on demand for the endless part of the game.
+##
+## Deterministic: the same level number always produces the same puzzle, on
+## every device, so restarting a level or reinstalling the game is fair.
+##
+## Solvable by construction. Arrows are placed in the reverse of a valid
+## removal order: each new arrow needs a clear exit path past every arrow
+## already placed, because it will leave before all of them. Dependencies
+## only ever make an earlier-placed arrow wait for a newer one, which agrees
+## with that order and therefore can never deadlock or form a cycle.
+## Every result is still verified with BoardSolver before it is returned.
+##
+## Difficulty comes from blocking: each new arrow is preferably placed on a
+## cell that lies in the exit path of arrows already placed, so those arrows
+## end up waiting for it. Few arrows are free at the start, and clearing the
+## board takes several rounds of discovery.
+##
+## Vault challenge twists (only when requested, so ordinary levels are
+## generated exactly as before):
+##   walls        solid cells placed first; every arrow's path must avoid them.
+##   double_locks arrows may wait for two keys.
+##   long_chains  new keys prefer neighbours that are already keys, building
+##                chains of four or more.
+##   hidden_links presentation only (BoardView hides the chains).
+## Master arrow (every 50th level): chosen after generation among arrows that
+## leave around the middle of the solve, then double-locked to two neighbours
+## that leave earlier; the result is re-verified.
+
+## Part of every seed. Changing it (or the algorithm) changes every generated
+## level, so only do so deliberately.
+const SEED_SALT := "chain-escape-levels-v1"
+## Candidates built per level; the one closest to the target difficulty wins.
+const CANDIDATE_COUNT := 8
+## Board width range. Height is width + 1..2, capped at MAX_ROWS, so boards
+## stay portrait and arrows stay comfortably tappable on phones.
+const MIN_COLUMNS := 6
+const MAX_COLUMNS := 8
+const MAX_ROWS := 10
+const MIN_FILL_RATIO := 0.55
+const MAX_FILL_RATIO := 0.75
+const MIN_DEPENDENCY_CHANCE := 0.12
+const MAX_DEPENDENCY_CHANCE := 0.3
+const MIN_TARGET_ROUNDS := 5.0
+const MAX_TARGET_ROUNDS := 10.0
+## Share of arrows that may be free at the start before a candidate is penalised.
+const MAX_TARGET_FREE_RATIO := 0.3
+const MIN_TARGET_FREE_RATIO := 0.18
+## Weight of excess free arrows against the rounds target when scoring.
+const FREE_RATIO_WEIGHT := 20.0
+## Empty cells compared per placement; the one blocking most arrows wins.
+const CELL_SAMPLE_SIZE := 4
+## Chance to take the direction with the longest exit path rather than a
+## random valid one. Long paths leave room for later arrows to block them.
+const LONG_PATH_PREFERENCE := 0.7
+const DIRECTIONS: Array[Arrow.Direction] = [
+	Arrow.Direction.UP, Arrow.Direction.DOWN, Arrow.Direction.LEFT, Arrow.Direction.RIGHT,
+]
+## Dependencies link neighbours only; long links across the board are hard to read.
+const NEIGHBOUR_OFFSETS: Array[Vector2i] = [
+	Vector2i(-1, -1), Vector2i(0, -1), Vector2i(1, -1),
+	Vector2i(-1, 0), Vector2i(1, 0),
+	Vector2i(-1, 1), Vector2i(0, 1), Vector2i(1, 1),
+]
+## Twist tuning.
+const WALL_RATIO := 0.08
+const DOUBLE_LOCK_EXTRA_CHANCE := 0.15
+const LONG_CHAIN_EXTRA_CHANCE := 0.12
+const MIN_DOUBLE_LOCKS := 2
+const MIN_LONG_CHAIN := 4
+const MISSING_TWIST_PENALTY := 6.0
+## Hardness (0..1) tightens a level beyond the difficulty ramp without making
+## the board bigger: fewer free arrows at the start, longer solves, more
+## dependencies and walls. 0 leaves generation exactly as before.
+const HARDNESS_EXTRA_ROUNDS := 4.0
+const HARDNESS_MIN_FREE_RATIO := 0.1
+const HARDNESS_EXTRA_DEPENDENCY_CHANCE := 0.12
+const HARDNESS_EXTRA_WALL_RATIO := 0.05
+## At full hardness, this many times CANDIDATE_COUNT extra candidates are tried.
+const HARDNESS_EXTRA_CANDIDATES := 0.5
+## Weight of excess free arrows when hardness is high (on top of FREE_RATIO_WEIGHT).
+const HARDNESS_FREE_RATIO_WEIGHT := 30.0
+## Master arrow: it should become free between these fractions of the solve.
+const MASTER_ROUND_MIN := 0.4
+const MASTER_ROUND_MAX := 0.75
+
+
+## Builds the level for [param level_number]. [param difficulty] runs from
+## 0.0 (gentlest generated level) to 1.0 (hardest settings). Returns null
+## only if every candidate failed verification, which indicates a bug.
+static func generate(level_number: int, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0) -> LevelData:
+	return generate_from_seed("%s:%d" % [SEED_SALT, level_number], difficulty, twists, with_master, hardness)
+
+
+## Same as generate(), seeded by any text (used for daily puzzles, which
+## must never repeat a numbered level).
+static func generate_from_seed(seed_text: String, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0) -> LevelData:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_text.hash()
+	difficulty = clampf(difficulty, 0.0, 1.0)
+	hardness = clampf(hardness, 0.0, 1.0)
+	var target_rounds := lerpf(MIN_TARGET_ROUNDS, MAX_TARGET_ROUNDS, difficulty) + HARDNESS_EXTRA_ROUNDS * hardness
+	var target_free_ratio := lerpf(lerpf(MAX_TARGET_FREE_RATIO, MIN_TARGET_FREE_RATIO, difficulty), HARDNESS_MIN_FREE_RATIO, hardness)
+
+	var best_level: LevelData = null
+	var best_score := INF
+	# Harder levels search more candidates to find a tighter board.
+	var candidate_count := CANDIDATE_COUNT + roundi(CANDIDATE_COUNT * HARDNESS_EXTRA_CANDIDATES * hardness)
+	for attempt: int in candidate_count:
+		var candidate := _build_candidate(difficulty, rng, twists, hardness)
+		var board := candidate.build_board()
+		if board == null:
+			push_error("LevelGenerator: %s candidate %d produced invalid data." % [seed_text, attempt])
+			continue
+		var free_ratio := float(_count_free_arrows(board)) / board.arrow_count()
+		var rounds := BoardSolver.count_solution_rounds(board)
+		if rounds < 0:
+			push_error("LevelGenerator: %s candidate %d is unsolvable." % [seed_text, attempt])
+			continue
+		var score := absf(rounds - target_rounds) + maxf(free_ratio - target_free_ratio, 0.0) * (FREE_RATIO_WEIGHT + HARDNESS_FREE_RATIO_WEIGHT * hardness)
+		score += _missing_twist_penalty(candidate, twists)
+		if score < best_score:
+			best_score = score
+			best_level = candidate
+	if best_level != null:
+		best_level.twists = twists
+		if with_master and not _add_master(best_level):
+			push_warning("LevelGenerator: %s has no suitable master arrow." % seed_text)
+	return best_level
+
+
+static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twists: PackedStringArray, hardness: float = 0.0) -> LevelData:
+	var columns := clampi(roundi(lerpf(MIN_COLUMNS, MAX_COLUMNS, difficulty)) - rng.randi_range(0, 1), MIN_COLUMNS, MAX_COLUMNS)
+	var rows := mini(columns + rng.randi_range(1, 2), MAX_ROWS)
+	var board_size := Vector2i(columns, rows)
+	var target_arrow_count := roundi(columns * rows * lerpf(MIN_FILL_RATIO, MAX_FILL_RATIO, difficulty))
+	var dependency_chance := lerpf(MIN_DEPENDENCY_CHANCE, MAX_DEPENDENCY_CHANCE, difficulty) + HARDNESS_EXTRA_DEPENDENCY_CHANCE * hardness
+	var max_keys_per_arrow := 1
+	var prefer_chain_ends := twists.has(LevelData.TWIST_LONG_CHAINS)
+	if twists.has(LevelData.TWIST_DOUBLE_LOCKS):
+		dependency_chance += DOUBLE_LOCK_EXTRA_CHANCE
+		max_keys_per_arrow = 2
+	if prefer_chain_ends:
+		dependency_chance += LONG_CHAIN_EXTRA_CHANCE
+
+	var placed: Dictionary[Vector2i, Arrow.Direction] = {}
+	## How many keys each placed arrow already waits for.
+	var waiting_counts: Dictionary[Vector2i, int] = {}
+	## Arrows that some other arrow waits for.
+	var key_cells: Dictionary[Vector2i, bool] = {}
+	var dependencies: Array[Vector4i] = []
+	## How many placed arrows have each cell in their exit path.
+	var path_coverage: Dictionary[Vector2i, int] = {}
+	var open_cells := _shuffled_cells(board_size, rng)
+	var walls: Dictionary[Vector2i, bool] = {}
+	if twists.has(LevelData.TWIST_WALLS):
+		for index: int in roundi(columns * rows * (WALL_RATIO + HARDNESS_EXTRA_WALL_RATIO * hardness)):
+			walls[open_cells.pop_back()] = true
+	while placed.size() < target_arrow_count and not open_cells.is_empty():
+		var cell_index := _pick_most_covered_cell(open_cells, path_coverage, rng)
+		var cell := open_cells[cell_index]
+		open_cells.remove_at(cell_index)
+		var options: Array[Arrow.Direction] = []
+		for direction: Arrow.Direction in DIRECTIONS:
+			if _is_exit_path_clear(cell, direction, board_size, placed, walls):
+				options.append(direction)
+		if options.is_empty():
+			continue
+		if rng.randf() < dependency_chance:
+			var waiting_cell := _pick_waiting_neighbour(cell, placed, waiting_counts, max_keys_per_arrow, key_cells if prefer_chain_ends else {}, rng)
+			if waiting_cell != cell:
+				dependencies.append(Vector4i(waiting_cell.x, waiting_cell.y, cell.x, cell.y))
+				waiting_counts[waiting_cell] = waiting_counts.get(waiting_cell, 0) + 1
+				key_cells[cell] = true
+		var direction := _pick_direction(cell, options, board_size, rng)
+		placed[cell] = direction
+		for path_cell: Vector2i in _exit_path(cell, direction, board_size):
+			path_coverage[path_cell] = path_coverage.get(path_cell, 0) + 1
+
+	var level := LevelData.new()
+	level.layout = _layout_text(board_size, placed, walls)
+	level.dependencies = dependencies
+	return level
+
+
+## True if no already-placed arrow or wall stands between [param cell] and the edge.
+static func _is_exit_path_clear(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool]) -> bool:
+	for path_cell: Vector2i in _exit_path(cell, direction, board_size):
+		if placed.has(path_cell) or walls.has(path_cell):
+			return false
+	return true
+
+
+static func _exit_path(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i) -> Array[Vector2i]:
+	var path: Array[Vector2i] = []
+	var step := Arrow.direction_to_vector(direction)
+	var current := cell + step
+	while current.x >= 0 and current.y >= 0 and current.x < board_size.x and current.y < board_size.y:
+		path.append(current)
+		current += step
+	return path
+
+
+## Index into [param open_cells] of the best of a few random samples: the cell
+## lying in the most placed arrows' paths, so placing there blocks them.
+static func _pick_most_covered_cell(open_cells: Array[Vector2i], path_coverage: Dictionary[Vector2i, int], rng: RandomNumberGenerator) -> int:
+	var best_index := rng.randi_range(0, open_cells.size() - 1)
+	for sample: int in CELL_SAMPLE_SIZE - 1:
+		var index := rng.randi_range(0, open_cells.size() - 1)
+		if path_coverage.get(open_cells[index], 0) > path_coverage.get(open_cells[best_index], 0):
+			best_index = index
+	return best_index
+
+
+## Usually the valid direction with the longest exit path, sometimes a random
+## one so boards don't all point outward the same way.
+static func _pick_direction(cell: Vector2i, options: Array[Arrow.Direction], board_size: Vector2i, rng: RandomNumberGenerator) -> Arrow.Direction:
+	if rng.randf() >= LONG_PATH_PREFERENCE:
+		return options[rng.randi_range(0, options.size() - 1)]
+	var best := options[0]
+	for direction: Arrow.Direction in options:
+		if _exit_path(cell, direction, board_size).size() > _exit_path(cell, best, board_size).size():
+			best = direction
+	return best
+
+
+static func _count_free_arrows(board: BoardState) -> int:
+	var free_count := 0
+	for arrow: Arrow in board.get_arrows():
+		if board.can_exit(arrow.id):
+			free_count += 1
+	return free_count
+
+
+## An already-placed neighbour that could be made to wait for the arrow being
+## placed at [param cell], or [param cell] itself if there is none. Skips
+## neighbours already waiting for [param max_keys] keys (one per arrow keeps
+## ordinary boards readable; double locks allow two) and neighbours whose path
+## already runs through [param cell] (a dependency there would add nothing).
+## Neighbours in [param preferred] (existing keys) are chosen first, which
+## extends chains.
+static func _pick_waiting_neighbour(cell: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], waiting_counts: Dictionary[Vector2i, int], max_keys: int, preferred: Dictionary, rng: RandomNumberGenerator) -> Vector2i:
+	var candidates: Array[Vector2i] = []
+	for offset: Vector2i in NEIGHBOUR_OFFSETS:
+		var neighbour := cell + offset
+		if not placed.has(neighbour) or waiting_counts.get(neighbour, 0) >= max_keys:
+			continue
+		if Arrow.direction_to_vector(placed[neighbour]) == -offset:
+			continue
+		candidates.append(neighbour)
+	if candidates.is_empty():
+		return cell
+	if not preferred.is_empty():
+		var chain_ends := candidates.filter(func(c: Vector2i) -> bool: return preferred.has(c))
+		if not chain_ends.is_empty():
+			candidates.assign(chain_ends)
+	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+
+## All cells in a random order, using [param rng] (Array.shuffle would use the
+## global generator and break determinism).
+static func _shuffled_cells(board_size: Vector2i, rng: RandomNumberGenerator) -> Array[Vector2i]:
+	var cells: Array[Vector2i] = []
+	for y: int in board_size.y:
+		for x: int in board_size.x:
+			cells.append(Vector2i(x, y))
+	for index: int in range(cells.size() - 1, 0, -1):
+		var swap_index := rng.randi_range(0, index)
+		var temporary := cells[index]
+		cells[index] = cells[swap_index]
+		cells[swap_index] = temporary
+	return cells
+
+
+static func _layout_text(board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool]) -> String:
+	var lines := PackedStringArray()
+	for y: int in board_size.y:
+		var symbols := PackedStringArray()
+		for x: int in board_size.x:
+			var cell := Vector2i(x, y)
+			if placed.has(cell):
+				symbols.append(LevelData.symbol_for(placed[cell]))
+			elif walls.has(cell):
+				symbols.append(LevelData.WALL_SYMBOL)
+			else:
+				symbols.append(LevelData.EMPTY_SYMBOL)
+		lines.append(" ".join(symbols))
+	return "\n".join(lines)
+
+
+static func _directions_by_cell(level: LevelData) -> Dictionary[Vector2i, Arrow.Direction]:
+	var directions: Dictionary[Vector2i, Arrow.Direction] = {}
+	var board := level.build_board()
+	for arrow: Arrow in board.get_arrows():
+		directions[arrow.cell] = arrow.direction
+	return directions
+
+
+## Score penalty when a candidate fails to show a requested twist clearly.
+static func _missing_twist_penalty(level: LevelData, twists: PackedStringArray) -> float:
+	var penalty := 0.0
+	if twists.has(LevelData.TWIST_DOUBLE_LOCKS):
+		penalty += maxi(MIN_DOUBLE_LOCKS - count_double_locks(level), 0) * MISSING_TWIST_PENALTY
+	if twists.has(LevelData.TWIST_LONG_CHAINS):
+		penalty += maxi(MIN_LONG_CHAIN - longest_chain(level), 0) * MISSING_TWIST_PENALTY
+	return penalty
+
+
+## Arrows that wait for two or more keys.
+static func count_double_locks(level: LevelData) -> int:
+	var counts: Dictionary[Vector2i, int] = {}
+	for link: Vector4i in level.dependencies:
+		var cell := Vector2i(link.x, link.y)
+		counts[cell] = counts.get(cell, 0) + 1
+	return counts.values().filter(func(count: int) -> bool: return count >= 2).size()
+
+
+## Arrows in the longest chain (A waits for B waits for C … counts each arrow).
+static func longest_chain(level: LevelData) -> int:
+	var keys_of: Dictionary[Vector2i, Array] = {}
+	for link: Vector4i in level.dependencies:
+		var waiting := Vector2i(link.x, link.y)
+		if not keys_of.has(waiting):
+			keys_of[waiting] = []
+		keys_of[waiting].append(Vector2i(link.z, link.w))
+	var memo: Dictionary[Vector2i, int] = {}
+	var best := 0
+	for cell: Vector2i in keys_of:
+		best = maxi(best, _chain_length(cell, keys_of, memo))
+	return best
+
+
+static func _chain_length(cell: Vector2i, keys_of: Dictionary[Vector2i, Array], memo: Dictionary[Vector2i, int]) -> int:
+	if memo.has(cell):
+		return memo[cell]
+	var length := 1
+	for key: Vector2i in keys_of.get(cell, []):
+		length = maxi(length, 1 + _chain_length(key, keys_of, memo))
+	memo[cell] = length
+	return length
+
+
+## Picks the master arrow and double-locks it. Candidates are arrows that
+## become free between MASTER_ROUND_MIN and MASTER_ROUND_MAX of the solve and
+## have at least two neighbours that leave earlier; the most central wins.
+## Keeps the level unchanged and returns false if none works.
+static func _add_master(level: LevelData) -> bool:
+	var board := level.build_board()
+	if board == null:
+		return false
+	var cells_by_id: Dictionary[int, Vector2i] = {}
+	for arrow: Arrow in board.get_arrows():
+		cells_by_id[arrow.id] = arrow.cell
+	var size := board.size
+	var rounds := BoardSolver.exit_rounds(board)
+	if rounds.has(-1) or rounds.is_empty():
+		return false
+	var total_rounds: int = rounds.values().max()
+	var round_by_cell: Dictionary[Vector2i, int] = {}
+	for id: int in rounds:
+		round_by_cell[cells_by_id[id]] = rounds[id]
+	var center := (Vector2(size) - Vector2.ONE) * 0.5
+	var candidates: Array[Vector2i] = []
+	for cell: Vector2i in round_by_cell:
+		var fraction := float(round_by_cell[cell]) / total_rounds
+		if fraction >= MASTER_ROUND_MIN and fraction <= MASTER_ROUND_MAX:
+			candidates.append(cell)
+	candidates.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return Vector2(a).distance_to(center) < Vector2(b).distance_to(center))
+	var directions := _directions_by_cell(level)
+	for cell: Vector2i in candidates:
+		var keys: Array[Vector2i] = []
+		for offset: Vector2i in NEIGHBOUR_OFFSETS:
+			var neighbour := cell + offset
+			# A key directly in the master's path already blocks it: skip it.
+			if Arrow.direction_to_vector(directions[cell]) == offset:
+				continue
+			if round_by_cell.has(neighbour) and round_by_cell[neighbour] < round_by_cell[cell]:
+				keys.append(neighbour)
+		if keys.size() < 2:
+			continue
+		keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return round_by_cell[a] > round_by_cell[b])
+		var trial := level.duplicate() as LevelData
+		trial.dependencies = level.dependencies.duplicate()
+		for key: Vector2i in keys.slice(0, 2):
+			var link := Vector4i(cell.x, cell.y, key.x, key.y)
+			if not trial.dependencies.has(link):
+				trial.dependencies.append(link)
+		trial.master_cell = cell
+		var check := trial.build_board()
+		if check == null or check.can_exit(check.get_master_id()) or not BoardSolver.is_solvable(check):
+			continue
+		level.dependencies = trial.dependencies
+		level.master_cell = cell
+		return true
+	return false

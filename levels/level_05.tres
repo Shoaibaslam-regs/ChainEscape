@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="LevelData" format=3]
+
+[ext_resource type="Script" path="res://scripts/levels/level_data.gd" id="1_qeuge"]
+
+[resource]
+script = ExtResource("1_qeuge")
+title = "Chain Reaction"
+tip = "One freed arrow can unlock the next."
+layout = "> . v . ^
+. ^ . < .
+v . > . .
+. < . ^ >
+< . . v ."
+dependencies = Array[Vector4i]([Vector4i(4, 0, 3, 1), Vector4i(3, 1, 2, 2), Vector4i(1, 3, 0, 4)])
