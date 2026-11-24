@@ -4,11 +4,13 @@ extends TestSuite
 func test_arrow_themes_unlock_by_points() -> void:
 	check_eq(ArrowTheme.THEMES[0]["points"], 0, "Gold is free")
 	check(ArrowTheme.is_unlocked("gold", 0), "Gold always unlocked")
-	check(not ArrowTheme.is_unlocked("emerald", 245), "Emerald locked below 250")
-	check(ArrowTheme.is_unlocked("emerald", 250), "Emerald at 250")
-	check_eq(ArrowTheme.resolve("sapphire", 300)["id"], "gold", "locked choice falls back to Gold")
+	check(not ArrowTheme.is_unlocked("emerald", 495), "Emerald locked below 500")
+	check(ArrowTheme.is_unlocked("emerald", 500), "Emerald at 500")
+	check(ArrowTheme.is_unlocked("sapphire", 1200) and not ArrowTheme.is_unlocked("amethyst", 4995), "Sapphire at 1200, Amethyst not before 5000")
+	check(ArrowTheme.is_unlocked("rose_gold", 15000) and not ArrowTheme.is_unlocked("rose_gold", 14995), "Rose gold at 15000")
+	check_eq(ArrowTheme.resolve("sapphire", 600)["id"], "gold", "locked choice falls back to Gold")
 	check_eq(ArrowTheme.resolve("nonsense", 9999)["id"], "gold", "unknown id falls back to Gold")
-	check_eq(ArrowTheme.next_locked(300)["id"], "sapphire", "next theme to earn")
+	check_eq(ArrowTheme.next_locked(600)["id"], "sapphire", "next theme to earn")
 	check(ArrowTheme.next_locked(999999).is_empty(), "all unlocked eventually")
 	var last := 0
 	for theme: Dictionary in ArrowTheme.THEMES:

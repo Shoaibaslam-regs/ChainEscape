@@ -10,6 +10,7 @@ const SUITE_PATHS: Array[String] = [
 	"res://tests/test_progress.gd",
 	"res://tests/test_settings_and_achievements.gd",
 	"res://tests/test_daily.gd",
+	"res://tests/test_weekly.gd",
 	"res://tests/test_splash_and_theme.gd",
 	"res://tests/test_app_flow.gd",
 ]

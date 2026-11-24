@@ -17,6 +17,8 @@ extends Control
 @export var settings_path: String = SettingsStore.DEFAULT_PATH
 @export var achievements_path: String = AchievementTracker.DEFAULT_PATH
 @export var daily_path: String = DailyStore.DEFAULT_PATH
+@export var weekly_path: String = WeeklyStore.DEFAULT_PATH
+@export var weekly_screen_scene: PackedScene
 ## Pins "today" for tests (e.g. "2026-11-24"); empty means the device date.
 @export var daily_date_override: String = ""
 
@@ -29,12 +31,14 @@ const SCREEN_FADE_SECONDS := 0.2
 
 var _current_screen: Node = null
 var _settings_panel: SettingsPanel
+var _music: Music
 var _progress: ProgressStore
 var _levels: LevelSequence
 var _settings: SettingsStore
 var _achievements: AchievementTracker
 var _feedback: Feedback
 var _daily: DailyStore
+var _weekly: WeeklyStore
 var _ads: RewardedAds
 
 
@@ -46,6 +50,8 @@ func _ready() -> void:
 	_settings.load_settings()
 	_achievements = AchievementTracker.new(achievements_path)
 	_achievements.load_achievements()
+	_weekly = WeeklyStore.new(weekly_path)
+	_weekly.load_results()
 	_daily = DailyStore.new(daily_path)
 	_daily.load_results()
 	_feedback = Feedback.new()
@@ -53,6 +59,9 @@ func _ready() -> void:
 	_ads = RewardedAds.new()
 	add_child(_ads)
 	_feedback.apply_settings(_settings)
+	# Music starts on Home (the splash has its own sounds).
+	_music = Music.new()
+	add_child(_music)
 	if level_catalog == null:
 		push_error("Main: level_catalog is not assigned.")
 		level_catalog = LevelCatalog.new()
@@ -75,17 +84,29 @@ func show_home() -> void:
 	var screen := _show_screen(home_screen_scene) as HomeScreen
 	if screen == null:
 		return
+	_music.apply_settings(_settings)
 	var next_level := _progress.get_next_level_number()
+	_levels.prefetch(next_level)
 	screen.set_next_level(next_level, _levels.upcoming_label(next_level))
 	screen.set_stars(_progress.total_stars())
 	screen.set_reduced_motion(_settings.reduced_motion)
 	screen.set_points(_progress.get_points())
-	screen.set_daily_status(_daily_status())
+	screen.set_daily_status(_daily_status(), _daily_detail())
+	var week := WeeklyChallenge.week_key(get_today())
+	screen.set_weekly_progress(_weekly.solved_count(week), WeeklyChallenge.PUZZLES, WeeklyChallenge.days_left(get_today()))
+	screen.themes_requested.connect(open_settings)
+	screen.weekly_requested.connect(show_weekly)
 	screen.set_rewards(_achievements)
 	screen.rewards_requested.connect(show_achievements)
 	screen.play_requested.connect(show_game)
 	screen.settings_requested.connect(open_settings)
 	screen.daily_requested.connect(show_daily)
+
+
+func _exit_tree() -> void:
+	# Background level generation must finish before the app closes.
+	if _levels != null:
+		_levels.finish_prefetch()
 
 
 func show_achievements() -> void:
@@ -106,13 +127,48 @@ func show_daily() -> void:
 	screen.play_requested.connect(show_daily_game)
 
 
+func show_weekly() -> void:
+	var screen := _show_screen(weekly_screen_scene) as WeeklyScreen
+	if screen == null:
+		return
+	screen.setup(get_today(), _weekly)
+	screen.back_requested.connect(show_home)
+	screen.puzzle_requested.connect(show_weekly_game)
+
+
+func show_weekly_game(index: int) -> void:
+	var screen := _show_screen(game_screen_scene) as GameScreen
+	if screen == null:
+		return
+	screen.home_requested.connect(show_home)
+	screen.settings_requested.connect(open_settings)
+	screen.challenge_finished.connect(show_weekly)
+	screen.setup(_levels, _progress, _achievements, _feedback, _settings.reduced_motion, _ads)
+	screen.set_arrow_theme(get_arrow_theme())
+	var week := WeeklyChallenge.week_key(get_today())
+	screen.play_challenge(WeeklyMode.new(week, index, _weekly), WeeklyChallenge.level_for(week, index))
+
+
+func get_weekly() -> WeeklyStore:
+	return _weekly
+
+
+## Second line of the Daily card.
+func _daily_detail() -> String:
+	if _daily.is_solved(get_today()):
+		var seconds := DailyDate.seconds_until_tomorrow()
+		return "Next in %dh %02dm" % [seconds / 3600, (seconds % 3600) / 60]
+	var streak := _daily.current_streak(get_today())
+	return "Keep the streak going" if streak > 0 else "Same board for everyone"
+
+
 func show_daily_game() -> void:
 	var screen := _show_screen(game_screen_scene) as GameScreen
 	if screen == null:
 		return
 	screen.home_requested.connect(show_home)
 	screen.settings_requested.connect(open_settings)
-	screen.daily_finished.connect(show_daily)
+	screen.challenge_finished.connect(show_daily)
 	screen.setup(_levels, _progress, _achievements, _feedback, _settings.reduced_motion, _ads)
 	screen.set_arrow_theme(get_arrow_theme())
 	var today := get_today()
@@ -152,6 +208,7 @@ func open_settings() -> void:
 		_settings_panel = settings_panel_scene.instantiate() as SettingsPanel
 		_overlay_container.add_child(_settings_panel)
 		_settings_panel.settings_changed.connect(_feedback.apply_settings.bind(_settings))
+		_settings_panel.settings_changed.connect(_music.apply_settings.bind(_settings))
 		_settings_panel.settings_changed.connect(_apply_arrow_theme)
 		_settings_panel.reset_confirmed.connect(_on_reset_confirmed)
 	_settings_panel.open(_settings, _progress.get_points())
@@ -180,11 +237,23 @@ func handle_back() -> void:
 		return
 	if _current_screen != null and _current_screen.has_method("handle_back") and _current_screen.handle_back():
 		return
-	get_tree().quit()
+	_quit()
 
 
 func get_current_screen() -> Node:
 	return _current_screen
+
+
+## Stops the music first, then closes the app a moment later, once the
+## audio engine has let go of the track.
+func _quit() -> void:
+	_music.set_enabled(false)
+	await get_tree().create_timer(Music.FADE_OUT_SECONDS + 0.1).timeout
+	get_tree().quit()
+
+
+func get_music() -> Music:
+	return _music
 
 
 func get_settings_panel() -> SettingsPanel:
@@ -220,6 +289,7 @@ func _on_reset_confirmed() -> void:
 	_progress.reset()
 	_achievements.reset()
 	_daily.reset()
+	_weekly.reset()
 	_settings_panel.close()
 	show_home()
 

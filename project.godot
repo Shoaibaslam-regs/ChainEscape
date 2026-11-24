@@ -46,3 +46,4 @@ renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 rendering_device/driver.windows="d3d12"
 environment/defaults/default_clear_color=Color(0.0431373, 0.0470588, 0.0627451, 1)
+textures/vram_compression/import_etc2_astc=true

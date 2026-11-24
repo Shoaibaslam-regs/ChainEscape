@@ -7,6 +7,8 @@ extends Control
 signal arrow_exited(arrow: Arrow)
 signal arrow_blocked(arrow: Arrow, blocker: Arrow)
 signal arrow_locked(arrow: Arrow, required: Array[Arrow])
+## A red (already tried, still stuck) arrow was tapped again: no move is spent.
+signal arrow_retapped(arrow: Arrow)
 signal board_cleared
 signal intro_finished
 ## A chain broke because [param key_arrow] left; [param lock_arrow] waited on it.
@@ -33,6 +35,11 @@ const REVEAL_SECONDS := 1.6
 ## Master release cascade: arrows leave nearest-first, this far apart per cell
 ## of distance from the master.
 const CASCADE_STEP_SECONDS := 0.04
+## Mirrors and black holes. Each black-hole pair has its own tint.
+const MIRROR_DARK := Color("4E5666")
+const MIRROR_LIGHT := Color("E6EBF2")
+const HOLE_TINTS: Array[Color] = [Color("9A7BFF"), Color("45C2B1")]
+const HOLE_CORE := Color("050507")
 const WALL_FILL := Color("1E1B16")
 const WALL_EDGE := Color(Palette.GOLD, 0.55)
 const WALL_HATCH := Color(Palette.GOLD, 0.22)
@@ -43,6 +50,8 @@ var hide_links: bool = false
 
 var _board: BoardState
 var _arrow_views: Dictionary[int, ArrowView] = {}
+## Arrows tapped while stuck; they stay red until they can leave.
+var _marked_wrong: Dictionary[int, bool] = {}
 ## The arrow theme's metal stops, applied to every arrow view.
 var arrow_metal: PackedColorArray = ArrowTheme.colors_of(ArrowTheme.THEMES[0]):
 	set(value):
@@ -74,6 +83,7 @@ func set_board(board: BoardState) -> void:
 		view.queue_free()
 	_arrow_views.clear()
 	_board = board
+	_marked_wrong.clear()
 	if _board != null:
 		for arrow: Arrow in _board.get_arrows():
 			var view := ArrowView.new()
@@ -166,9 +176,18 @@ func tap_at(local_position: Vector2) -> void:
 	var arrow := _board.get_arrow_at(local_to_cell(local_position))
 	if arrow == null:
 		return
+	if _marked_wrong.has(arrow.id) and not _board.can_exit(arrow.id):
+		var still_view: ArrowView = _arrow_views.get(arrow.id)
+		if still_view != null:
+			still_view.play_blocked()
+		if hide_links:
+			_reveal_links(arrow.id)
+		arrow_retapped.emit(arrow)
+		return
 	var pending := _board.get_pending_requirements(arrow.id)
 	if not pending.is_empty():
 		_play_rejected(arrow, pending)
+		_mark_wrong(arrow.id)
 		if hide_links:
 			_reveal_links(arrow.id)
 		arrow_locked.emit(arrow, pending)
@@ -179,6 +198,7 @@ func tap_at(local_position: Vector2) -> void:
 		if blocker != null:
 			causes.append(blocker)
 		_play_rejected(arrow, causes)
+		_mark_wrong(arrow.id)
 		arrow_blocked.emit(arrow, blocker)
 		return
 	if _board.is_master(arrow.id):
@@ -186,12 +206,16 @@ func tap_at(local_position: Vector2) -> void:
 		return
 	var waiting := _arrows_waiting_for(arrow)
 	var distance := _board.get_exit_path(arrow.id).size() + EXIT_OVERSHOOT_CELLS
+	var waypoints := _board.get_exit_waypoints(arrow.id)
 	if not _board.try_exit(arrow.id):
 		return
 	var view: ArrowView = _arrow_views.get(arrow.id)
 	_arrow_views.erase(arrow.id)
 	if view != null:
-		view.play_exit(distance)
+		if waypoints.size() > 2:
+			view.play_exit_path(_waypoint_positions(waypoints))
+		else:
+			view.play_exit(distance)
 	for waiting_arrow: Arrow in waiting:
 		_spawn_chain_break(waiting_arrow, arrow)
 	_refresh_dependencies(true)
@@ -228,8 +252,66 @@ func _draw() -> void:
 			var cell := Vector2i(x, y)
 			if _board.is_wall(cell):
 				_draw_wall(cell)
+			elif _board.get_mirrors().has(cell):
+				_draw_mirror(cell, _board.get_mirrors()[cell])
+			elif _hole_tint(cell) != Color.TRANSPARENT:
+				pass
 			else:
 				draw_circle(cell_to_local(cell), radius, GRID_DOT_COLOR, true, -1.0, true)
+
+
+	var pair := 0
+	for black: Vector2i in _board.get_portals():
+		var tint := HOLE_TINTS[pair % HOLE_TINTS.size()]
+		_draw_black_hole(black, tint)
+		_draw_white_hole(_board.get_portals()[black], tint)
+		pair += 1
+
+
+## Tint of the black/white hole at [param cell], or transparent if none.
+func _hole_tint(cell: Vector2i) -> Color:
+	var pair := 0
+	for black: Vector2i in _board.get_portals():
+		if black == cell or _board.get_portals()[black] == cell:
+			return HOLE_TINTS[pair % HOLE_TINTS.size()]
+		pair += 1
+	return Color.TRANSPARENT
+
+
+## A polished steel bar set corner to corner.
+func _draw_mirror(cell: Vector2i, kind: int) -> void:
+	var center := cell_to_local(cell)
+	var reach := _cell_size * 0.34
+	var a := center + (Vector2(-reach, reach) if kind == PathTracer.MIRROR_SLASH else Vector2(-reach, -reach))
+	var b := center + (Vector2(reach, -reach) if kind == PathTracer.MIRROR_SLASH else Vector2(reach, reach))
+	draw_line(a, b, MIRROR_DARK, maxf(_cell_size * 0.13, 3.0), true)
+	draw_line(a, b, Color(MIRROR_LIGHT, 0.9), maxf(_cell_size * 0.05, 1.5), true)
+	draw_circle(a, _cell_size * 0.065, MIRROR_DARK, true, -1.0, true)
+	draw_circle(b, _cell_size * 0.065, MIRROR_DARK, true, -1.0, true)
+
+
+## A dark core inside soft glowing rings, with a swirl.
+func _draw_black_hole(cell: Vector2i, tint: Color) -> void:
+	var center := cell_to_local(cell)
+	var radius := _cell_size * 0.36
+	for ring: int in 4:
+		var t := float(ring) / 3.0
+		draw_circle(center, radius * (1.25 - 0.12 * ring), Color(tint, 0.06 + 0.06 * t), true, -1.0, true)
+	draw_circle(center, radius * 0.78, HOLE_CORE, true, -1.0, true)
+	draw_arc(center, radius * 0.8, 0.0, TAU, 40, Color(tint, 0.9), maxf(_cell_size * 0.035, 1.5), true)
+	for arm: int in 3:
+		var start := arm * TAU / 3.0
+		draw_arc(center, radius * 0.55, start, start + 1.6, 16, Color(tint, 0.45), maxf(_cell_size * 0.025, 1.0), true)
+
+
+## A bright ring where swallowed arrows come back out.
+func _draw_white_hole(cell: Vector2i, tint: Color) -> void:
+	var center := cell_to_local(cell)
+	var radius := _cell_size * 0.3
+	draw_circle(center, radius * 1.3, Color(tint, 0.12), true, -1.0, true)
+	draw_arc(center, radius, 0.0, TAU, 40, Color(Color.WHITE, 0.95), maxf(_cell_size * 0.045, 2.0), true)
+	draw_arc(center, radius * 0.62, 0.0, TAU, 32, Color(tint, 0.85), maxf(_cell_size * 0.03, 1.5), true)
+	draw_circle(center, radius * 0.22, Color(Color.WHITE, 0.9), true, -1.0, true)
 
 
 func _draw_wall(cell: Vector2i) -> void:
@@ -304,7 +386,36 @@ func _refresh_dependencies(animate_unlocks: bool) -> void:
 			view.play_unlock(UNLOCK_DELAY_SECONDS)
 		elif not view.is_unlocking():
 			view.is_locked = false
+	# A red arrow turns back to normal as soon as it can leave.
+	for id: int in _marked_wrong.keys():
+		if _board.get_arrow(id) == null or _board.can_exit(id):
+			_marked_wrong.erase(id)
+			var marked_view: ArrowView = _arrow_views.get(id)
+			if marked_view != null:
+				marked_view.is_marked_wrong = false
 	_refresh_chains()
+
+
+## Local positions for an exit path; the last point lies past the edge.
+func _waypoint_positions(waypoints: Array[Dictionary]) -> Array[Dictionary]:
+	var points: Array[Dictionary] = []
+	for point: Dictionary in waypoints:
+		var position_local := cell_to_local(point["cell"])
+		if point["kind"] == PathTracer.EDGE:
+			position_local += Vector2(Arrow.direction_to_vector(point["dir"])) * EXIT_OVERSHOOT_CELLS * _cell_size
+		points.append({"pos": position_local, "kind": point["kind"], "dir": point["dir"]})
+	return points
+
+
+func _mark_wrong(id: int) -> void:
+	_marked_wrong[id] = true
+	var view: ArrowView = _arrow_views.get(id)
+	if view != null:
+		view.is_marked_wrong = true
+
+
+func is_marked_wrong(id: int) -> bool:
+	return _marked_wrong.has(id)
 
 
 func _refresh_chains() -> void:

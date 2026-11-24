@@ -3,7 +3,9 @@ extends Control
 ## Level cleared: open padlock, title, what the player did, then Next or Replay.
 
 signal next_requested
-signal replay_requested
+signal home_requested
+## Replay the level just finished, to earn the stars still missing.
+signal retry_requested
 
 const OPEN_SECONDS := 0.25
 const STAR_FULL := preload("res://assets/icons/star_full.svg")
@@ -33,7 +35,8 @@ var _stars_tween: Tween
 func _ready() -> void:
 	hide()
 	_next_button.pressed.connect(next_requested.emit)
-	%ReplayButton.pressed.connect(replay_requested.emit)
+	%HomeButton.pressed.connect(home_requested.emit)
+	%RetryButton.pressed.connect(retry_requested.emit)
 
 
 ## [param was_challenge] / [param master_released] add the Vault seal and
@@ -42,6 +45,7 @@ func _ready() -> void:
 func open(level_number: int, chains_broken: int, wrong_taps: int, was_challenge: bool = false, master_released: bool = false, stars: int = 0, upcoming: String = "") -> void:
 	_stars = clampi(stars, 0, ProgressStore.MAX_STARS)
 	_stars_row.visible = _stars > 0
+	%RetryButton.visible = _stars > 0 and _stars < ProgressStore.MAX_STARS
 	_upcoming.text = upcoming
 	_upcoming.visible = not upcoming.is_empty()
 	_title.text = "MASTER CLEAR" if master_released else "LEVEL %d CLEARED" % level_number
@@ -59,23 +63,22 @@ func open(level_number: int, chains_broken: int, wrong_taps: int, was_challenge:
 	_play_entrance()
 
 
-## Daily challenge solved: result, streak, then back to the Daily screen.
-func open_daily(date_label: String, chains_broken: int, wrong_taps: int, streak: int) -> void:
+## A Daily or Weekly puzzle solved: its result, then back to its screen.
+func open_challenge(mode: ChallengeMode, chains_broken: int, wrong_taps: int) -> void:
 	_stars = 0
 	_stars_row.visible = false
+	%RetryButton.visible = false
 	_upcoming.visible = false
-	_title.text = "DAILY SOLVED"
-	if wrong_taps == 0:
-		_caption.text = "%s · flawless, no wrong taps." % date_label
-	else:
-		_caption.text = "%s · %d wrong %s. A new puzzle tomorrow." % [date_label, wrong_taps, "tap" if wrong_taps == 1 else "taps"]
+	_title.text = mode.result_title()
+	_caption.text = mode.result_caption(wrong_taps)
 	_chains_chip.visible = chains_broken > 0
 	_chains_label.text = "%d %s BROKEN" % [chains_broken, "CHAIN" if chains_broken == 1 else "CHAINS"]
 	_clean_chip.visible = wrong_taps == 0
-	_seal_chip.visible = streak > 0
-	_seal_label.text = "%d-DAY STREAK" % streak
+	var seal := mode.seal_text()
+	_seal_chip.visible = not seal.is_empty()
+	_seal_label.text = seal
 	_next_label.text = "DONE"
-	_next_level_label.text = "BACK TO DAILY"
+	_next_level_label.text = mode.done_label()
 	_play_entrance()
 
 
@@ -117,6 +120,10 @@ func close() -> void:
 ## Stars earned in the shown result (0 for a Daily).
 func get_stars() -> int:
 	return _stars if _stars_row.visible else 0
+
+
+func get_retry_button() -> Button:
+	return %RetryButton
 
 
 func get_seal() -> UnlockSeal:

@@ -11,6 +11,8 @@ const ICONS: Dictionary[String, Texture2D] = {
 	LevelData.TWIST_WALLS: preload("res://assets/icons/twists/walls.svg"),
 	LevelData.TWIST_LONG_CHAINS: preload("res://assets/icons/twists/long_chains.svg"),
 	LevelData.TWIST_HIDDEN_LINKS: preload("res://assets/icons/twists/hidden_links.svg"),
+	LevelData.TWIST_BLACK_HOLES: preload("res://assets/icons/twists/black_holes.svg"),
+	LevelData.TWIST_MIRRORS: preload("res://assets/icons/twists/mirrors.svg"),
 }
 const MASTER_ICON := preload("res://assets/icons/twists/master.svg")
 const MASTER_NAME := "Master arrow"

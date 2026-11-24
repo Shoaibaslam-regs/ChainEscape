@@ -63,19 +63,31 @@ text = "ACHIEVEMENTS"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"CaptionLabel"
+theme_override_colors/font_color = Color(0.49, 0.529, 0.604, 1)
 text = "0 of 13 unlocked"
 
+[node name="OverallBar" type="ProgressBar" parent="Margin/Layout"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 6)
+layout_mode = 2
+mouse_filter = 2
+show_percentage = false
+
 [node name="Scroll" type="ScrollContainer" parent="Margin/Layout"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
+vertical_scroll_mode = 3
 
 [node name="ListMargin" type="MarginContainer" parent="Margin/Layout/Scroll"]
 layout_mode = 2
+mouse_filter = 2
 size_flags_horizontal = 3
 theme_override_constants/margin_bottom = 48
 
 [node name="List" type="VBoxContainer" parent="Margin/Layout/Scroll/ListMargin"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_constants/separation = 14
+mouse_filter = 2
+theme_override_constants/separation = 16

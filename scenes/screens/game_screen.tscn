@@ -92,8 +92,7 @@ expand_icon = true
 [node name="StatusRow" type="HBoxContainer" parent="Margin/Layout"]
 custom_minimum_size = Vector2(0, 48)
 layout_mode = 2
-theme_override_constants/separation = 26
-alignment = 1
+theme_override_constants/separation = 20
 
 [node name="ArrowsGroup" type="HBoxContainer" parent="Margin/Layout/StatusRow"]
 layout_mode = 2
@@ -145,12 +144,11 @@ theme_override_colors/font_color = Color(0.788, 0.816, 0.863, 1)
 theme_override_font_sizes/font_size = 30
 text = "0"
 
-[node name="MovesDivider" type="ColorRect" parent="Margin/Layout/StatusRow"]
+[node name="MovesDivider" type="Control" parent="Margin/Layout/StatusRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(2, 28)
 layout_mode = 2
-size_flags_vertical = 4
-color = Color(1, 1, 1, 0.12)
+size_flags_horizontal = 3
+mouse_filter = 2
 
 [node name="Pips" type="HBoxContainer" parent="Margin/Layout/StatusRow"]
 unique_name_in_owner = true
@@ -223,11 +221,11 @@ offset_bottom = 60.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-theme_type_variation = &"DisplayLabel"
-theme_override_colors/font_outline_color = Color(0.043, 0.047, 0.063, 1)
-theme_override_constants/outline_size = 18
-theme_override_font_sizes/font_size = 92
-text = "NICE!"
+theme_type_variation = &"TitleLabel"
+theme_override_colors/font_outline_color = Color(0.043, 0.047, 0.063, 0.85)
+theme_override_constants/outline_size = 10
+theme_override_font_sizes/font_size = 44
+text = "Nice!"
 horizontal_alignment = 1
 vertical_alignment = 1
 script = ExtResource("9_praise")

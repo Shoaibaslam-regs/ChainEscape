@@ -15,34 +15,51 @@ extends RefCounted
 ## - Every 50th level hides a master arrow.
 
 ## Generated levels it takes to reach the generator's hardest settings.
-const DIFFICULTY_RAMP_LEVELS := 80
+const DIFFICULTY_RAMP_LEVELS := 40
 const FIRST_CHALLENGE_LEVEL := 27
 const CHALLENGE_GAP_MIN := 20
 const CHALLENGE_GAP_MAX := 30
 const CHALLENGE_SEED_SALT := "chain-escape-vaults-v1"
 const CHALLENGE_DIFFICULTY_BONUS := 0.2
 ## Challenges from this index on merge two twists.
-const COMBINE_FROM_CHALLENGE := 4
+## Challenges after every twist has debuted merge two twists.
+const COMBINE_FROM_CHALLENGE := 6
 const PRACTICE_LEVELS := 2
 const SINGLE_TWIST_CHANCE := 0.25
 const MERGE_CHANCE := 1.0 / 6.0
 const TWIST_SEED_SALT := "chain-escape-twists-v1"
 const MASTER_INTERVAL := 50
-## Hardness keeps rising after the difficulty ramp: slowly for ordinary
-## levels, faster and earlier for Vault challenges (each tighter than the last).
-const LATE_HARDNESS_LEVELS := 600
-const LATE_HARDNESS_MAX := 0.6
+## Hardness for ordinary levels starts at HARDNESS_START_LEVEL and climbs
+## steeply at first (square-root curve), reaching LATE_HARDNESS_MAX after
+## LATE_HARDNESS_LEVELS more levels. Vault challenges stay clearly harder:
+## each is at least CHALLENGE_HARDNESS_MARGIN above the levels around it.
+const HARDNESS_START_LEVEL := 20
+const LATE_HARDNESS_LEVELS := 280
+const LATE_HARDNESS_MAX := 0.9
 const CHALLENGE_HARDNESS_START := 0.2
 const CHALLENGE_HARDNESS_STEP := 0.07
+const CHALLENGE_HARDNESS_MARGIN := 0.25
+## Boards grow beyond 8 x 10 from BOARD_GROWTH_START_LEVEL, reaching their
+## largest size BOARD_GROWTH_LEVELS later.
+const BOARD_GROWTH_START_LEVEL := 70
+const BOARD_GROWTH_LEVELS := 230
 ## The order in which twists are introduced.
 const TWIST_ORDER: Array[String] = [
 	LevelData.TWIST_DOUBLE_LOCKS,
 	LevelData.TWIST_WALLS,
 	LevelData.TWIST_LONG_CHAINS,
 	LevelData.TWIST_HIDDEN_LINKS,
+	LevelData.TWIST_BLACK_HOLES,
+	LevelData.TWIST_MIRRORS,
 ]
 
 var _handmade: LevelCatalog
+## Generated levels kept ready (hard levels take a moment to generate, so
+## the next one is prepared in the background while the player plays).
+var _cache: Dictionary[int, LevelData] = {}
+var _cache_mutex := Mutex.new()
+var _prefetch_tasks: Dictionary[int, int] = {}
+const CACHE_SIZE := 4
 
 
 func _init(handmade: LevelCatalog) -> void:
@@ -58,17 +75,72 @@ func is_generated(level_number: int) -> bool:
 
 
 ## Returns the level, or null for numbers below 1 (or a generator failure).
+## Generated levels come from the cache when prefetched (or played before).
 func get_level(level_number: int) -> LevelData:
 	if level_number < 1:
 		return null
 	if not is_generated(level_number):
 		return _handmade.get_level(level_number - 1)
+	_wait_for_prefetch(level_number)
+	_cache_mutex.lock()
+	var cached: LevelData = _cache.get(level_number)
+	_cache_mutex.unlock()
+	if cached != null:
+		return cached
+	var level := _generate(level_number)
+	_store(level_number, level)
+	return level
+
+
+## Starts generating [param level_number] on a worker thread, if needed.
+func prefetch(level_number: int) -> void:
+	if not is_generated(level_number) or _prefetch_tasks.has(level_number):
+		return
+	_cache_mutex.lock()
+	var cached := _cache.has(level_number)
+	_cache_mutex.unlock()
+	if cached:
+		return
+	_prefetch_tasks[level_number] = WorkerThreadPool.add_task(func() -> void:
+		_store(level_number, _generate(level_number)))
+
+
+func is_cached(level_number: int) -> bool:
+	_cache_mutex.lock()
+	var cached := _cache.has(level_number)
+	_cache_mutex.unlock()
+	return cached
+
+
+## Waits for every background generation (call before quitting).
+func finish_prefetch() -> void:
+	for level_number: int in _prefetch_tasks.keys():
+		_wait_for_prefetch(level_number)
+
+
+func _wait_for_prefetch(level_number: int) -> void:
+	if _prefetch_tasks.has(level_number):
+		WorkerThreadPool.wait_for_task_completion(_prefetch_tasks[level_number])
+		_prefetch_tasks.erase(level_number)
+
+
+func _store(level_number: int, level: LevelData) -> void:
+	if level == null:
+		return
+	_cache_mutex.lock()
+	_cache[level_number] = level
+	while _cache.size() > CACHE_SIZE:
+		_cache.erase(_cache.keys().min())
+	_cache_mutex.unlock()
+
+
+func _generate(level_number: int) -> LevelData:
 	var challenge := challenge_index(level_number)
 	var twists := twists_for_level(level_number)
 	var difficulty := difficulty_for(level_number)
 	if challenge >= 0:
 		difficulty = minf(difficulty + CHALLENGE_DIFFICULTY_BONUS, 1.0)
-	var level := LevelGenerator.generate(level_number, difficulty, twists, is_master_level(level_number), hardness_for(level_number))
+	var level := LevelGenerator.generate(level_number, difficulty, twists, is_master_level(level_number), hardness_for(level_number), size_for(level_number))
 	if level == null:
 		return null
 	if challenge >= 0:
@@ -175,11 +247,26 @@ func difficulty_for(level_number: int) -> float:
 ## at 0 and rise slowly once the ramp is complete; Vault challenge number k
 ## gets CHALLENGE_HARDNESS_START + k * CHALLENGE_HARDNESS_STEP (capped at 1).
 func hardness_for(level_number: int) -> float:
+	var ordinary := _ordinary_hardness(level_number)
 	var challenge := challenge_index(level_number)
 	if challenge >= 0:
-		return minf(CHALLENGE_HARDNESS_START + challenge * CHALLENGE_HARDNESS_STEP, 1.0)
-	var past_ramp := level_number - _handmade.count() - 1 - DIFFICULTY_RAMP_LEVELS
-	return clampf(float(past_ramp) / LATE_HARDNESS_LEVELS, 0.0, 1.0) * LATE_HARDNESS_MAX
+		var scheduled := CHALLENGE_HARDNESS_START + challenge * CHALLENGE_HARDNESS_STEP
+		return minf(maxf(scheduled, ordinary + CHALLENGE_HARDNESS_MARGIN), 1.0)
+	return ordinary
+
+
+func _ordinary_hardness(level_number: int) -> float:
+	if not is_generated(level_number):
+		return 0.0
+	var t := clampf(float(level_number - HARDNESS_START_LEVEL) / LATE_HARDNESS_LEVELS, 0.0, 1.0)
+	return sqrt(t) * LATE_HARDNESS_MAX
+
+
+## 0..1: how far the board has grown past 8 x 10 (more, smaller arrows).
+func size_for(level_number: int) -> float:
+	if not is_generated(level_number):
+		return 0.0
+	return clampf(float(level_number - BOARD_GROWTH_START_LEVEL) / BOARD_GROWTH_LEVELS, 0.0, 1.0)
 
 
 ## 0-based index of the Vault challenge at [param level_number], or -1.

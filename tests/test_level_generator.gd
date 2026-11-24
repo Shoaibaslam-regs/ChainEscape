@@ -60,8 +60,8 @@ func test_generated_levels_are_valid_solvable_and_challenging() -> void:
 		check(board != null, "%s builds: %s" % [label, errors])
 		if board == null:
 			continue
-		check(board.size.x >= LevelGenerator.MIN_COLUMNS and board.size.x <= LevelGenerator.MAX_COLUMNS, "%s width in range" % label)
-		check(board.size.y > board.size.x and board.size.y <= LevelGenerator.MAX_ROWS, "%s is portrait and fits" % label)
+		check(board.size.x >= LevelGenerator.MIN_COLUMNS and board.size.x <= LevelGenerator.MAX_COLUMNS + LevelGenerator.EXTRA_COLUMNS, "%s width in range" % label)
+		check(board.size.y > board.size.x and board.size.y <= LevelGenerator.MAX_ROWS + LevelGenerator.EXTRA_ROWS, "%s is portrait and fits" % label)
 		var free_count := 0
 		for arrow: Arrow in board.get_arrows():
 			if board.can_exit(arrow.id):
@@ -112,6 +112,18 @@ func test_far_levels_generate() -> void:
 		check(level != null and BoardSolver.is_solvable(level.build_board()), "level %d playable" % level_number)
 
 
+func test_next_level_is_prepared_in_the_background() -> void:
+	var sequence := _get_sequence()
+	sequence.prefetch(400)
+	var started_at := Time.get_ticks_usec()
+	while not sequence.is_cached(400) and Time.get_ticks_usec() - started_at < 5000000:
+		await wait_frames(1)
+	check(sequence.is_cached(400), "level 400 generated on a worker thread")
+	var direct := LevelSequence.new(load("res://levels/level_catalog.tres")).get_level(400)
+	check_eq(sequence.get_level(400).layout, direct.layout, "same level as generating it directly")
+	sequence.finish_prefetch()
+
+
 func test_generation_is_fast_enough() -> void:
 	var sequence := _get_sequence()
 	var start := sequence.handmade_count() + LevelSequence.DIFFICULTY_RAMP_LEVELS
@@ -120,7 +132,15 @@ func test_generation_is_fast_enough() -> void:
 		sequence.get_level(level_number)
 	var average_ms := (Time.get_ticks_usec() - started_at) / 20000.0
 	print("  hardest-tier generation: %.1f ms per level (desktop)" % average_ms)
-	check(average_ms < 60.0, "hardest levels generate in under 60 ms on desktop (%.1f ms)" % average_ms)
+	# Generated on a worker thread while the previous level is played, so the
+	# budget is "ready long before the player finishes", not "instant".
+	check(average_ms < 150.0, "hard levels generate in under 150 ms on desktop (%.1f ms)" % average_ms)
+	var fresh := LevelSequence.new(load("res://levels/level_catalog.tres"))
+	var big_started := Time.get_ticks_usec()
+	fresh.get_level(400)
+	var big_ms := (Time.get_ticks_usec() - big_started) / 1000.0
+	print("  largest boards: %.0f ms (desktop)" % big_ms)
+	check(big_ms < 600.0, "largest boards generate in under 600 ms on desktop (%.0f ms)" % big_ms)
 
 
 func _average_arrows(sequence: LevelSequence, first_level: int, count: int) -> float:
@@ -211,9 +231,14 @@ func test_challenge_levels_show_their_twists() -> void:
 		var label := "challenge level %d" % level_number
 		check(level.is_challenge, "%s flagged" % label)
 		check(not level.twists.is_empty(), "%s has twists" % label)
-		check_eq(level.new_twist, LevelSequence.TWIST_ORDER[index] if index < 4 else "", "%s new twist" % label)
+		check_eq(level.new_twist, LevelSequence.TWIST_ORDER[index] if index < LevelSequence.TWIST_ORDER.size() else "", "%s new twist" % label)
 		var board := level.build_board()
 		check(board != null and BoardSolver.is_solvable(level.build_board()), "%s solvable" % label)
+		var uses := LevelGenerator.count_tile_uses(level)
+		if level.has_twist(LevelData.TWIST_MIRRORS):
+			check(uses.x >= LevelGenerator.MIN_TILE_USES, "%s: %d arrows bounce off mirrors" % [label, uses.x])
+		if level.has_twist(LevelData.TWIST_BLACK_HOLES):
+			check(uses.y >= LevelGenerator.MIN_TILE_USES, "%s: %d arrows fly through black holes" % [label, uses.y])
 		if level.has_twist(LevelData.TWIST_WALLS):
 			check(board.get_walls().size() >= 3, "%s has walls" % label)
 			check(board.get_arrows().all(func(a: Arrow) -> bool: return not board.is_walled_in(a.id)), "%s: no arrow walled in for good" % label)
@@ -274,10 +299,33 @@ func test_challenges_get_harder() -> void:
 
 func test_ordinary_levels_keep_getting_harder() -> void:
 	var sequence := _get_sequence()
-	var ramp_end := sequence.handmade_count() + LevelSequence.DIFFICULTY_RAMP_LEVELS
-	check_eq(sequence.hardness_for(ramp_end), 0.0, "no extra hardness during the ramp")
-	check(sequence.hardness_for(ramp_end + 300) > 0.0, "rises after the ramp")
-	check(is_equal_approx(sequence.hardness_for(ramp_end + 5000), LevelSequence.LATE_HARDNESS_MAX), "capped")
+	check_eq(sequence.hardness_for(LevelSequence.HARDNESS_START_LEVEL - 1), 0.0, "no extra hardness early on")
+	check(sequence.hardness_for(100) >= 0.4, "clearly harder by level 100 (%.2f)" % sequence.hardness_for(100))
+	var previous := 0.0
+	for level_number: int in [30, 60, 100, 150, 220, 300]:
+		if sequence.challenge_index(level_number) >= 0:
+			continue
+		check(sequence.hardness_for(level_number) >= previous, "keeps rising at level %d" % level_number)
+		previous = sequence.hardness_for(level_number)
+	check(is_equal_approx(sequence.hardness_for(5001), LevelSequence.LATE_HARDNESS_MAX), "capped")
+	for index: int in 10:
+		var vault := sequence.challenge_level(index)
+		check(sequence.hardness_for(vault) > sequence.hardness_for(vault - 1) + 0.2 or sequence.hardness_for(vault) == 1.0, "vault %d harder than the level before it" % index)
+
+
+func test_boards_grow_with_more_smaller_arrows() -> void:
+	var sequence := _get_sequence()
+	check_eq(sequence.size_for(60), 0.0, "boards stay 8 x 10 at most early on")
+	check_eq(sequence.size_for(1000), 1.0, "and grow to the largest size later")
+	var biggest := Vector2i.ZERO
+	var arrows := 0
+	for level_number: int in range(400, 410):
+		var board := sequence.get_level(level_number).build_board()
+		biggest = Vector2i(maxi(biggest.x, board.size.x), maxi(biggest.y, board.size.y))
+		arrows = maxi(arrows, board.arrow_count())
+	check(biggest.x > LevelGenerator.MAX_COLUMNS and biggest.x <= LevelGenerator.MAX_COLUMNS + LevelGenerator.EXTRA_COLUMNS, "wider boards late (%d columns)" % biggest.x)
+	check(biggest.y <= LevelGenerator.MAX_ROWS + LevelGenerator.EXTRA_ROWS, "never taller than the cap (%d rows)" % biggest.y)
+	print("  late boards: up to %s with %d arrows" % [biggest, arrows])
 
 
 ## Average (rounds, dependencies) over [param count] challenges from [param first].

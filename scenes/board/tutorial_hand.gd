@@ -21,7 +21,9 @@ var _target_id: int = -1
 
 
 func _init() -> void:
-	z_index = 10
+	# Added last on the board, so it draws over the arrows; a z_index would
+	# also lift it over overlays (Pause, Level complete) drawn after the board.
+	z_index = 0
 	_sprite.texture = TEXTURE
 	_sprite.centered = false
 	add_child(_sprite)

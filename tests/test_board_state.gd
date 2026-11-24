@@ -245,3 +245,42 @@ func test_solver_rounds_with_master() -> void:
 	check_eq(rounds[a], 1, "key first")
 	check_eq(rounds[master], 2, "master second")
 	check_eq(rounds[c], 2, "everything else leaves with the master")
+
+
+func test_mirror_turns_the_path() -> void:
+	var board := BoardState.new(Vector2i(4, 4))
+	var id := board.add_arrow(Vector2i(0, 2), Arrow.Direction.RIGHT)
+	check(board.add_mirror(Vector2i(2, 2), PathTracer.MIRROR_SLASH), "mirror placed")
+	check_eq(board.get_exit_path(id), [Vector2i(1, 2), Vector2i(2, 2), Vector2i(2, 1), Vector2i(2, 0)] as Array[Vector2i], "'/' turns a right-moving arrow up")
+	var blocker := board.add_arrow(Vector2i(2, 0), Arrow.Direction.UP)
+	check(not board.can_exit(id), "an arrow after the bounce blocks it")
+	board.try_exit(blocker)
+	check(board.can_exit(id), "free once that arrow leaves")
+	check_eq(PathTracer.reflect(Arrow.Direction.DOWN, PathTracer.MIRROR_BACKSLASH), Arrow.Direction.RIGHT, "'\\' turns down into right")
+	check(not board.add_arrow(Vector2i(2, 2), Arrow.Direction.UP) >= 0, "no arrow on a mirror")
+
+
+func test_black_hole_sends_arrow_out_of_white_hole() -> void:
+	var board := BoardState.new(Vector2i(5, 5))
+	var id := board.add_arrow(Vector2i(0, 0), Arrow.Direction.RIGHT)
+	check(board.add_portal(Vector2i(2, 0), Vector2i(2, 3)), "portal placed")
+	check_eq(board.get_exit_path(id), [Vector2i(1, 0), Vector2i(2, 0), Vector2i(2, 3), Vector2i(3, 3), Vector2i(4, 3)] as Array[Vector2i], "in the black hole, out of the white hole, same direction")
+	var kinds := board.get_exit_waypoints(id).map(func(p: Dictionary) -> String: return p["kind"])
+	check(kinds.has(PathTracer.ENTER) and kinds.has(PathTracer.EMERGE), "waypoints mark the jump")
+	var far := board.add_arrow(Vector2i(4, 3), Arrow.Direction.DOWN)
+	check_eq(board.find_blocker(id), board.get_arrow(far), "blocked on the far side of the white hole")
+	var crossing := board.add_arrow(Vector2i(2, 4), Arrow.Direction.UP)
+	check_eq(board.get_exit_path(crossing)[0], Vector2i(2, 3), "white holes are ordinary cells to fly across")
+
+
+func test_endless_loop_counts_as_stuck() -> void:
+	var board := BoardState.new(Vector2i(3, 3))
+	# Four mirrors around the middle send the arrow round and round.
+	# right -> "\" -> down -> "/" -> left -> "\" -> up -> "/" -> right ...
+	board.add_mirror(Vector2i(0, 0), PathTracer.MIRROR_SLASH)
+	board.add_mirror(Vector2i(2, 0), PathTracer.MIRROR_BACKSLASH)
+	board.add_mirror(Vector2i(2, 2), PathTracer.MIRROR_SLASH)
+	board.add_mirror(Vector2i(0, 2), PathTracer.MIRROR_BACKSLASH)
+	var id := board.add_arrow(Vector2i(1, 0), Arrow.Direction.RIGHT)
+	check(board.is_walled_in(id), "an arrow that can never reach the edge is stuck")
+	check(not board.can_exit(id), "and cannot exit")

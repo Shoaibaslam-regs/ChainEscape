@@ -5,8 +5,10 @@ extends RefCounted
 ##   1. it is not locked: every arrow it requires has already left, and
 ##   2. its path is clear: every cell between it and the board edge, in its
 ##      direction, holds neither an arrow nor a wall.
-## Walls never move. If a master arrow is set, its exit releases every
-## remaining arrow at once (the level is complete).
+## Walls never move. Mirrors turn a path 90 degrees and black holes send it
+## on from their paired white hole (see PathTracer); a path that loops
+## forever counts as walled in. If a master arrow is set, its exit releases
+## every remaining arrow at once (the level is complete).
 
 var size: Vector2i:
 	get:
@@ -17,6 +19,11 @@ var _next_id: int = 0
 var _arrows_by_id: Dictionary[int, Arrow] = {}
 var _arrow_id_by_cell: Dictionary[Vector2i, int] = {}
 var _walls: Dictionary[Vector2i, bool] = {}
+## cell -> PathTracer.MIRROR_*.
+var _mirrors: Dictionary = {}
+## black hole cell -> white hole cell.
+var _portals: Dictionary = {}
+var _white_holes: Dictionary[Vector2i, bool] = {}
 var _master_id: int = -1
 
 
@@ -30,7 +37,7 @@ func _init(p_size: Vector2i) -> void:
 ## board or already occupied (the caller reports invalid data).
 ## Ids are assigned sequentially from 0.
 func add_arrow(cell: Vector2i, direction: Arrow.Direction) -> int:
-	if not is_inside(cell) or _arrow_id_by_cell.has(cell) or _walls.has(cell):
+	if not is_inside(cell) or not _is_plain(cell):
 		return -1
 	var arrow := Arrow.new(_next_id, cell, direction)
 	_next_id += 1
@@ -41,10 +48,54 @@ func add_arrow(cell: Vector2i, direction: Arrow.Direction) -> int:
 
 ## Places a wall. Returns false outside the board or on an occupied cell.
 func add_wall(cell: Vector2i) -> bool:
-	if not is_inside(cell) or _arrow_id_by_cell.has(cell) or _walls.has(cell):
+	if not is_inside(cell) or not _is_plain(cell):
 		return false
 	_walls[cell] = true
 	return true
+
+
+## Places a mirror (PathTracer.MIRROR_SLASH or MIRROR_BACKSLASH).
+func add_mirror(cell: Vector2i, kind: int) -> bool:
+	if not is_inside(cell) or not _is_plain(cell):
+		return false
+	_mirrors[cell] = kind
+	return true
+
+
+## Links a black hole to the white hole it sends arrows out of.
+func add_portal(black_hole: Vector2i, white_hole: Vector2i) -> bool:
+	if black_hole == white_hole or not is_inside(black_hole) or not is_inside(white_hole):
+		return false
+	if not _is_plain(black_hole) or not _is_plain(white_hole):
+		return false
+	_portals[black_hole] = white_hole
+	_white_holes[white_hole] = true
+	return true
+
+
+func get_mirrors() -> Dictionary:
+	return _mirrors
+
+
+func get_portals() -> Dictionary:
+	return _portals
+
+
+## Animation waypoints for the arrow's way out (see PathTracer.trace).
+func get_exit_waypoints(id: int) -> Array[Dictionary]:
+	var arrow := get_arrow(id)
+	if arrow == null:
+		return []
+	return _trace(arrow)["waypoints"]
+
+
+func _trace(arrow: Arrow) -> Dictionary:
+	return PathTracer.trace(arrow.cell, arrow.direction, _size, _mirrors, _portals)
+
+
+## True if nothing (arrow, wall, mirror or hole) occupies the cell.
+func _is_plain(cell: Vector2i) -> bool:
+	return not (_arrow_id_by_cell.has(cell) or _walls.has(cell) or _mirrors.has(cell) or _portals.has(cell) or _white_holes.has(cell))
 
 
 func is_wall(cell: Vector2i) -> bool:
@@ -123,11 +174,7 @@ func get_exit_path(id: int) -> Array[Vector2i]:
 	var arrow := get_arrow(id)
 	if arrow == null:
 		return path
-	var step := Arrow.direction_to_vector(arrow.direction)
-	var cell := arrow.cell + step
-	while is_inside(cell):
-		path.append(cell)
-		cell += step
+	path.assign(_trace(arrow)["cells"])
 	return path
 
 
@@ -135,7 +182,7 @@ func get_exit_path(id: int) -> Array[Vector2i]:
 func find_blocker(id: int) -> Arrow:
 	for cell: Vector2i in get_exit_path(id):
 		var other := get_arrow_at(cell)
-		if other != null:
+		if other != null and other.id != id:
 			return other
 	return null
 
@@ -160,6 +207,9 @@ func is_locked(id: int) -> bool:
 
 ## True if a wall stands in the arrow's exit path (it can never leave).
 func is_walled_in(id: int) -> bool:
+	var arrow := get_arrow(id)
+	if arrow != null and not _trace(arrow)["escaped"]:
+		return true
 	for cell: Vector2i in get_exit_path(id):
 		if _walls.has(cell):
 			return true

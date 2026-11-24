@@ -38,6 +38,11 @@ const CANDIDATE_COUNT := 8
 const MIN_COLUMNS := 6
 const MAX_COLUMNS := 8
 const MAX_ROWS := 10
+## Late levels grow past MAX_COLUMNS x MAX_ROWS by up to this much ("size"
+## 0..1): denser boards with many more, smaller arrows. 10 x 13 keeps cells
+## big enough to tap reliably on a phone.
+const EXTRA_COLUMNS := 2
+const EXTRA_ROWS := 3
 const MIN_FILL_RATIO := 0.55
 const MAX_FILL_RATIO := 0.75
 const MIN_DEPENDENCY_CHANCE := 0.12
@@ -70,6 +75,12 @@ const LONG_CHAIN_EXTRA_CHANCE := 0.12
 const MIN_DOUBLE_LOCKS := 2
 const MIN_LONG_CHAIN := 4
 const MISSING_TWIST_PENALTY := 6.0
+## Mirrors per cell, and black hole pairs (more on big boards).
+const MIRROR_RATIO := 0.05
+const MIN_MIRRORS := 3
+const BIG_BOARD_CELLS := 80
+## A twist only counts if at least this many arrows' paths use its cells.
+const MIN_TILE_USES := 3
 ## Hardness (0..1) tightens a level beyond the difficulty ramp without making
 ## the board bigger: fewer free arrows at the start, longer solves, more
 ## dependencies and walls. 0 leaves generation exactly as before.
@@ -81,6 +92,12 @@ const HARDNESS_EXTRA_WALL_RATIO := 0.05
 const HARDNESS_EXTRA_CANDIDATES := 0.5
 ## Weight of excess free arrows when hardness is high (on top of FREE_RATIO_WEIGHT).
 const HARDNESS_FREE_RATIO_WEIGHT := 30.0
+## Tightening (hardness > 0): free-at-start arrows are chained to a
+## neighbour that leaves later, until only this share of arrows is free
+## (from the first value at low hardness to the second at full hardness).
+const TIGHT_FREE_RATIO_EASY := 0.26
+const TIGHT_FREE_RATIO_HARD := 0.08
+const MIN_FREE_ARROWS := 3
 ## Master arrow: it should become free between these fractions of the solve.
 const MASTER_ROUND_MIN := 0.4
 const MASTER_ROUND_MAX := 0.75
@@ -89,13 +106,13 @@ const MASTER_ROUND_MAX := 0.75
 ## Builds the level for [param level_number]. [param difficulty] runs from
 ## 0.0 (gentlest generated level) to 1.0 (hardest settings). Returns null
 ## only if every candidate failed verification, which indicates a bug.
-static func generate(level_number: int, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0) -> LevelData:
-	return generate_from_seed("%s:%d" % [SEED_SALT, level_number], difficulty, twists, with_master, hardness)
+static func generate(level_number: int, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0, size: float = 0.0) -> LevelData:
+	return generate_from_seed("%s:%d" % [SEED_SALT, level_number], difficulty, twists, with_master, hardness, size)
 
 
 ## Same as generate(), seeded by any text (used for daily puzzles, which
 ## must never repeat a numbered level).
-static func generate_from_seed(seed_text: String, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0) -> LevelData:
+static func generate_from_seed(seed_text: String, difficulty: float, twists: PackedStringArray = PackedStringArray(), with_master: bool = false, hardness: float = 0.0, size: float = 0.0) -> LevelData:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_text.hash()
 	difficulty = clampf(difficulty, 0.0, 1.0)
@@ -108,7 +125,7 @@ static func generate_from_seed(seed_text: String, difficulty: float, twists: Pac
 	# Harder levels search more candidates to find a tighter board.
 	var candidate_count := CANDIDATE_COUNT + roundi(CANDIDATE_COUNT * HARDNESS_EXTRA_CANDIDATES * hardness)
 	for attempt: int in candidate_count:
-		var candidate := _build_candidate(difficulty, rng, twists, hardness)
+		var candidate := _build_candidate(difficulty, rng, twists, hardness, size)
 		var board := candidate.build_board()
 		if board == null:
 			push_error("LevelGenerator: %s candidate %d produced invalid data." % [seed_text, attempt])
@@ -125,14 +142,18 @@ static func generate_from_seed(seed_text: String, difficulty: float, twists: Pac
 			best_level = candidate
 	if best_level != null:
 		best_level.twists = twists
+		if hardness > 0.0:
+			tighten(best_level, hardness, rng)
 		if with_master and not _add_master(best_level):
 			push_warning("LevelGenerator: %s has no suitable master arrow." % seed_text)
 	return best_level
 
 
-static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twists: PackedStringArray, hardness: float = 0.0) -> LevelData:
-	var columns := clampi(roundi(lerpf(MIN_COLUMNS, MAX_COLUMNS, difficulty)) - rng.randi_range(0, 1), MIN_COLUMNS, MAX_COLUMNS)
-	var rows := mini(columns + rng.randi_range(1, 2), MAX_ROWS)
+static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twists: PackedStringArray, hardness: float = 0.0, size: float = 0.0) -> LevelData:
+	var max_columns := MAX_COLUMNS + roundi(EXTRA_COLUMNS * clampf(size, 0.0, 1.0))
+	var max_rows := MAX_ROWS + roundi(EXTRA_ROWS * clampf(size, 0.0, 1.0))
+	var columns := clampi(roundi(lerpf(MIN_COLUMNS, max_columns, difficulty)) - rng.randi_range(0, 1), MIN_COLUMNS, max_columns)
+	var rows := mini(columns + rng.randi_range(1, 3 if size > 0.0 else 2), max_rows)
 	var board_size := Vector2i(columns, rows)
 	var target_arrow_count := roundi(columns * rows * lerpf(MIN_FILL_RATIO, MAX_FILL_RATIO, difficulty))
 	var dependency_chance := lerpf(MIN_DEPENDENCY_CHANCE, MAX_DEPENDENCY_CHANCE, difficulty) + HARDNESS_EXTRA_DEPENDENCY_CHANCE * hardness
@@ -157,13 +178,31 @@ static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twis
 	if twists.has(LevelData.TWIST_WALLS):
 		for index: int in roundi(columns * rows * (WALL_RATIO + HARDNESS_EXTRA_WALL_RATIO * hardness)):
 			walls[open_cells.pop_back()] = true
+	## Special cells: mirrors (cell -> kind) and black holes (cell -> white hole).
+	var mirrors: Dictionary = {}
+	var portals: Dictionary = {}
+	if twists.has(LevelData.TWIST_MIRRORS):
+		for index: int in maxi(MIN_MIRRORS, roundi(columns * rows * MIRROR_RATIO)):
+			mirrors[open_cells.pop_back()] = rng.randi_range(0, 1)
+	if twists.has(LevelData.TWIST_BLACK_HOLES):
+		for pair: int in (2 if columns * rows >= BIG_BOARD_CELLS else 1):
+			var black := open_cells.pop_back() as Vector2i
+			# The white hole goes well away from its black hole.
+			for attempt: int in open_cells.size():
+				var candidate: Vector2i = open_cells[open_cells.size() - 1 - attempt]
+				if absi(candidate.x - black.x) + absi(candidate.y - black.y) >= 4:
+					portals[black] = candidate
+					open_cells.erase(candidate)
+					break
+	# Plain boards keep the fast straight-line paths.
+	var tiles := {"mirrors": mirrors, "portals": portals} if not (mirrors.is_empty() and portals.is_empty()) else {}
 	while placed.size() < target_arrow_count and not open_cells.is_empty():
 		var cell_index := _pick_most_covered_cell(open_cells, path_coverage, rng)
 		var cell := open_cells[cell_index]
 		open_cells.remove_at(cell_index)
 		var options: Array[Arrow.Direction] = []
 		for direction: Arrow.Direction in DIRECTIONS:
-			if _is_exit_path_clear(cell, direction, board_size, placed, walls):
+			if _is_exit_path_clear(cell, direction, board_size, placed, walls, tiles):
 				options.append(direction)
 		if options.is_empty():
 			continue
@@ -173,26 +212,39 @@ static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twis
 				dependencies.append(Vector4i(waiting_cell.x, waiting_cell.y, cell.x, cell.y))
 				waiting_counts[waiting_cell] = waiting_counts.get(waiting_cell, 0) + 1
 				key_cells[cell] = true
-		var direction := _pick_direction(cell, options, board_size, rng)
+		var direction := _pick_direction(cell, options, board_size, rng, tiles)
 		placed[cell] = direction
-		for path_cell: Vector2i in _exit_path(cell, direction, board_size):
+		for path_cell: Vector2i in _exit_path(cell, direction, board_size, tiles):
 			path_coverage[path_cell] = path_coverage.get(path_cell, 0) + 1
 
 	var level := LevelData.new()
-	level.layout = _layout_text(board_size, placed, walls)
+	level.layout = _layout_text(board_size, placed, walls, mirrors)
+	for black: Vector2i in portals:
+		var white: Vector2i = portals[black]
+		level.portals.append(Vector4i(black.x, black.y, white.x, white.y))
 	level.dependencies = dependencies
 	return level
 
 
 ## True if no already-placed arrow or wall stands between [param cell] and the edge.
-static func _is_exit_path_clear(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool]) -> bool:
-	for path_cell: Vector2i in _exit_path(cell, direction, board_size):
+static func _is_exit_path_clear(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool], tiles: Dictionary = {}) -> bool:
+	if not tiles.is_empty() and not _trace(cell, direction, board_size, tiles)["escaped"]:
+		return false
+	for path_cell: Vector2i in _exit_path(cell, direction, board_size, tiles):
 		if placed.has(path_cell) or walls.has(path_cell):
 			return false
 	return true
 
 
-static func _exit_path(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i) -> Array[Vector2i]:
+static func _trace(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i, tiles: Dictionary) -> Dictionary:
+	return PathTracer.trace(cell, direction, board_size, tiles.get("mirrors", {}), tiles.get("portals", {}))
+
+
+static func _exit_path(cell: Vector2i, direction: Arrow.Direction, board_size: Vector2i, tiles: Dictionary = {}) -> Array[Vector2i]:
+	if not tiles.is_empty():
+		var traced: Array[Vector2i] = []
+		traced.assign(_trace(cell, direction, board_size, tiles)["cells"])
+		return traced
 	var path: Array[Vector2i] = []
 	var step := Arrow.direction_to_vector(direction)
 	var current := cell + step
@@ -215,14 +267,68 @@ static func _pick_most_covered_cell(open_cells: Array[Vector2i], path_coverage: 
 
 ## Usually the valid direction with the longest exit path, sometimes a random
 ## one so boards don't all point outward the same way.
-static func _pick_direction(cell: Vector2i, options: Array[Arrow.Direction], board_size: Vector2i, rng: RandomNumberGenerator) -> Arrow.Direction:
+static func _pick_direction(cell: Vector2i, options: Array[Arrow.Direction], board_size: Vector2i, rng: RandomNumberGenerator, tiles: Dictionary = {}) -> Arrow.Direction:
 	if rng.randf() >= LONG_PATH_PREFERENCE:
 		return options[rng.randi_range(0, options.size() - 1)]
 	var best := options[0]
 	for direction: Arrow.Direction in options:
-		if _exit_path(cell, direction, board_size).size() > _exit_path(cell, best, board_size).size():
+		if _exit_path(cell, direction, board_size, tiles).size() > _exit_path(cell, best, board_size, tiles).size():
 			best = direction
 	return best
+
+
+## Makes [param level] harder in place: arrows that are free at the start
+## wait for a neighbour that leaves later, verified solvable after every
+## link. Fewer obvious first moves and longer chains of steps.
+static func tighten(level: LevelData, hardness: float, rng: RandomNumberGenerator) -> void:
+	var board := level.build_board()
+	if board == null:
+		return
+	var cells_by_id: Dictionary[int, Vector2i] = {}
+	var ids_by_cell: Dictionary[Vector2i, int] = {}
+	for arrow: Arrow in board.get_arrows():
+		cells_by_id[arrow.id] = arrow.cell
+		ids_by_cell[arrow.cell] = arrow.id
+	var target_free := maxi(MIN_FREE_ARROWS, roundi(board.arrow_count() * lerpf(TIGHT_FREE_RATIO_EASY, TIGHT_FREE_RATIO_HARD, hardness)))
+	var rounds := BoardSolver.exit_rounds(level.build_board())
+	if rounds.has(-1):
+		return
+	var free_ids: Array[int] = []
+	for id: int in rounds:
+		if rounds[id] == 1:
+			free_ids.append(id)
+	# Deterministic shuffle with the level's own generator.
+	for index: int in range(free_ids.size() - 1, 0, -1):
+		var swap := rng.randi_range(0, index)
+		var temporary := free_ids[index]
+		free_ids[index] = free_ids[swap]
+		free_ids[swap] = temporary
+	var free_count := free_ids.size()
+	for id: int in free_ids:
+		if free_count <= target_free:
+			break
+		if rounds.get(id, 0) != 1:
+			continue
+		var cell := cells_by_id[id]
+		# Neighbours that leave later, latest first.
+		var options: Array[int] = []
+		for offset: Vector2i in NEIGHBOUR_OFFSETS:
+			var other: int = ids_by_cell.get(cell + offset, -1)
+			if other != -1 and rounds.get(other, 0) >= 2 and not board.get_exit_path(other).has(cell):
+				options.append(other)
+		options.sort_custom(func(a: int, b: int) -> bool: return rounds[a] > rounds[b])
+		for other: int in options.slice(0, 3):
+			var key_cell := cells_by_id[other]
+			var link := Vector4i(cell.x, cell.y, key_cell.x, key_cell.y)
+			level.dependencies.append(link)
+			var check_board := level.build_board()
+			var new_rounds := BoardSolver.exit_rounds(check_board) if check_board != null else ({-1: 0} as Dictionary[int, int])
+			if new_rounds.has(-1):
+				level.dependencies.pop_back()
+				continue
+			rounds = new_rounds
+			free_count = rounds.values().filter(func(r: int) -> bool: return r == 1).size()
+			break
 
 
 static func _count_free_arrows(board: BoardState) -> int:
@@ -273,7 +379,7 @@ static func _shuffled_cells(board_size: Vector2i, rng: RandomNumberGenerator) ->
 	return cells
 
 
-static func _layout_text(board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool]) -> String:
+static func _layout_text(board_size: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], walls: Dictionary[Vector2i, bool], mirrors: Dictionary = {}) -> String:
 	var lines := PackedStringArray()
 	for y: int in board_size.y:
 		var symbols := PackedStringArray()
@@ -283,6 +389,8 @@ static func _layout_text(board_size: Vector2i, placed: Dictionary[Vector2i, Arro
 				symbols.append(LevelData.symbol_for(placed[cell]))
 			elif walls.has(cell):
 				symbols.append(LevelData.WALL_SYMBOL)
+			elif mirrors.has(cell):
+				symbols.append(LevelData.MIRROR_SYMBOLS.find_key(mirrors[cell]))
 			else:
 				symbols.append(LevelData.EMPTY_SYMBOL)
 		lines.append(" ".join(symbols))
@@ -304,7 +412,29 @@ static func _missing_twist_penalty(level: LevelData, twists: PackedStringArray) 
 		penalty += maxi(MIN_DOUBLE_LOCKS - count_double_locks(level), 0) * MISSING_TWIST_PENALTY
 	if twists.has(LevelData.TWIST_LONG_CHAINS):
 		penalty += maxi(MIN_LONG_CHAIN - longest_chain(level), 0) * MISSING_TWIST_PENALTY
+	if twists.has(LevelData.TWIST_MIRRORS) or twists.has(LevelData.TWIST_BLACK_HOLES):
+		var uses := count_tile_uses(level)
+		if twists.has(LevelData.TWIST_MIRRORS):
+			penalty += maxi(MIN_TILE_USES - uses.x, 0) * MISSING_TWIST_PENALTY
+		if twists.has(LevelData.TWIST_BLACK_HOLES):
+			penalty += maxi(MIN_TILE_USES - uses.y, 0) * MISSING_TWIST_PENALTY
 	return penalty
+
+
+## How many arrows bounce off a mirror (x) and fly through a black hole (y)
+## on their way out.
+static func count_tile_uses(level: LevelData) -> Vector2i:
+	var uses := Vector2i.ZERO
+	var board := level.build_board()
+	if board == null:
+		return uses
+	for arrow: Arrow in board.get_arrows():
+		var kinds := board.get_exit_waypoints(arrow.id).map(func(point: Dictionary) -> String: return point["kind"])
+		if kinds.has(PathTracer.TURN):
+			uses.x += 1
+		if kinds.has(PathTracer.ENTER):
+			uses.y += 1
+	return uses
 
 
 ## Arrows that wait for two or more keys.

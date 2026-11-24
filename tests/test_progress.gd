@@ -157,3 +157,11 @@ func _write_version_1_save(path: String, completed_ids: Array[String]) -> void:
 	file.set_value(ProgressStore.SECTION, ProgressStore.KEY_VERSION, 1)
 	file.set_value(ProgressStore.SECTION, ProgressStore.LEGACY_KEY_COMPLETED_IDS, PackedStringArray(completed_ids))
 	file.save(path)
+
+
+func test_rank_titles_by_points() -> void:
+	check_eq(Rank.for_points(0)["name"], "Apprentice", "start as Apprentice")
+	check_eq(Rank.for_points(100)["name"], "Keyholder", "Keyholder at 100")
+	check(is_equal_approx(Rank.progress(250), 0.5), "halfway from Keyholder to Locksmith")
+	check_eq(Rank.for_points(999999)["name"], "Grand Escape Artist", "top rank")
+	check_eq(Rank.progress(999999), 1.0, "full bar at the top")

@@ -13,6 +13,7 @@ var _swatches: Array[ThemeSwatch] = []
 
 @onready var _sound_toggle: CheckButton = %SoundToggle
 @onready var _vibration_toggle: CheckButton = %VibrationToggle
+@onready var _music_toggle: CheckButton = %MusicToggle
 @onready var _motion_toggle: CheckButton = %MotionToggle
 @onready var _reset_button: Button = %ResetButton
 @onready var _confirm_card: Control = %ConfirmCard
@@ -25,6 +26,7 @@ func _ready() -> void:
 	%BackButton.pressed.connect(close)
 	_sound_toggle.toggled.connect(_on_toggle.bind("sound_enabled"))
 	_vibration_toggle.toggled.connect(_on_toggle.bind("vibration_enabled"))
+	_music_toggle.toggled.connect(_on_toggle.bind("music_enabled"))
 	_motion_toggle.toggled.connect(_on_toggle.bind("reduced_motion"))
 	_reset_button.pressed.connect(func() -> void: _confirm_card.show())
 	%CancelResetButton.pressed.connect(func() -> void: _confirm_card.hide())
@@ -48,6 +50,7 @@ func open(settings: SettingsStore, points: int = 0) -> void:
 	_refresh_themes()
 	_sound_toggle.set_pressed_no_signal(settings.sound_enabled)
 	_vibration_toggle.set_pressed_no_signal(settings.vibration_enabled)
+	_music_toggle.set_pressed_no_signal(settings.music_enabled)
 	_motion_toggle.set_pressed_no_signal(settings.reduced_motion)
 	_confirm_card.hide()
 	show()
@@ -66,6 +69,8 @@ func get_toggle(setting_name: String) -> CheckButton:
 			return _sound_toggle
 		"vibration_enabled":
 			return _vibration_toggle
+		"music_enabled":
+			return _music_toggle
 		"reduced_motion":
 			return _motion_toggle
 	return null

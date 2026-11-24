@@ -10,6 +10,8 @@ const FORMAT_VERSION := 1
 
 var path: String
 var sound_enabled: bool = true
+## Quiet background music (separate from sound effects).
+var music_enabled: bool = true
 var vibration_enabled: bool = true
 ## Replaces the splash and level-start animations with simple fades/snaps.
 var reduced_motion: bool = false
@@ -30,6 +32,7 @@ func load_settings() -> void:
 		push_warning("SettingsStore: could not read %s (%s); using defaults." % [path, error_string(result)])
 		return
 	sound_enabled = _read_bool(file, "sound_enabled", sound_enabled)
+	music_enabled = _read_bool(file, "music_enabled", music_enabled)
 	vibration_enabled = _read_bool(file, "vibration_enabled", vibration_enabled)
 	reduced_motion = _read_bool(file, "reduced_motion", reduced_motion)
 	var theme: Variant = file.get_value(SECTION, "arrow_theme", arrow_theme)
@@ -40,6 +43,7 @@ func save_settings() -> bool:
 	var file := ConfigFile.new()
 	file.set_value(SECTION, KEY_VERSION, FORMAT_VERSION)
 	file.set_value(SECTION, "sound_enabled", sound_enabled)
+	file.set_value(SECTION, "music_enabled", music_enabled)
 	file.set_value(SECTION, "vibration_enabled", vibration_enabled)
 	file.set_value(SECTION, "reduced_motion", reduced_motion)
 	file.set_value(SECTION, "arrow_theme", arrow_theme)

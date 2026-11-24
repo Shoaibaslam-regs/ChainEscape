@@ -11,11 +11,12 @@ var _paths: PackedStringArray = []
 ## Boots Main with throwaway save files so the player's data is untouched.
 func _boot(name: String) -> Main:
 	var main := (load(MAIN_SCENE_PATH) as PackedScene).instantiate() as Main
-	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily")])
+	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily"), temp_save_path(name + "_weekly")])
 	main.save_path = _paths[0]
 	main.settings_path = _paths[1]
 	main.achievements_path = _paths[2]
 	main.daily_path = _paths[3]
+	main.weekly_path = _paths[4]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -29,6 +30,7 @@ func _relaunch() -> Main:
 	main.settings_path = _paths[1]
 	main.achievements_path = _paths[2]
 	main.daily_path = _paths[3]
+	main.weekly_path = _paths[4]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -113,6 +115,48 @@ func test_clearing_level_shows_complete_then_next() -> void:
 	await _shutdown(relaunched)
 
 
+func test_retry_for_three_stars() -> void:
+	var main: Main = await _boot("flow_retry")
+	var game: GameScreen = await _open_game(main)
+	check(await _clear_level(game), "clean clear")
+	check(not game.get_complete_panel().get_retry_button().visible, "no retry link with 3 stars")
+	await _shutdown(main, false)
+	var again: Main = await _relaunch()
+	var replay: GameScreen = await _open_game(again)
+	await _start_generated_level(replay, 10)
+	check(_tap_wrong(replay), "one wrong move")
+	check(await _clear_level(replay), "cleared with a wrong move")
+	var panel := replay.get_complete_panel()
+	check_eq(panel.get_stars(), 2, "2 stars")
+	check(panel.get_retry_button().visible, "retry link offered")
+	panel.get_retry_button().pressed.emit()
+	await wait_frames(1)
+	while replay.get_achievement_panel().visible:
+		replay.get_achievement_panel().get_continue_button().pressed.emit()
+		await wait_frames(1)
+	check_eq(replay.get_level_number(), 10, "the same level starts again")
+	check_eq(replay.get_state(), GameScreen.State.PLAYING, "ready to play")
+	check(await _clear_level(replay), "cleared cleanly this time")
+	check_eq(again.get_progress().get_stars(10), 3, "best stars now 3")
+	await _shutdown(again)
+
+
+func test_level_complete_home_button() -> void:
+	var main: Main = await _boot("flow_complete_home")
+	var game: GameScreen = await _open_game(main)
+	check(await _clear_level(game), "level cleared")
+	var home_button := game.get_complete_panel().get_node("%HomeButton") as Button
+	check(home_button != null and home_button.visible, "Home button on Level complete")
+	home_button.pressed.emit()
+	await wait_frames(1)
+	# Achievements (if any) show first; otherwise the game screen is already gone.
+	while is_instance_valid(game) and game.get_achievement_panel().visible:
+		game.get_achievement_panel().get_continue_button().pressed.emit()
+		await wait_frames(1)
+	check(main.get_current_screen() is HomeScreen, "Home button returns Home")
+	await _shutdown(main)
+
+
 func test_first_chain_shows_achievement_before_next_level() -> void:
 	var main: Main = await _boot("flow_achievement")
 	var game: GameScreen = await _open_game(main)
@@ -154,7 +198,8 @@ func test_quick_releases_show_praise() -> void:
 	check(tap_clear(game.get_board_view()), "level 1's three arrows released in a quick run")
 	check_eq(game.get_release_streak().get_count(), 3, "streak of three")
 	check(game.get_praise_popup().visible, "praise shown")
-	check_eq(game.get_praise_popup().text, "NICE!", "NICE! for three quick releases")
+	check_eq(game.get_praise_popup().text, "Nice!", "Nice! for three quick releases")
+	check(game.get_praise_popup().get_font_size() <= PraisePopup.MAX_FONT_SIZE, "a small word, not a big banner")
 	check_eq(main.get_feedback().last_sound, Feedback.Sound.PRAISE, "praise sparkle played")
 	game.get_praise_popup().show_praise("UNSTOPPABLE!")
 	await wait_frames(2)
@@ -275,21 +320,30 @@ func test_home_rewards_card_and_achievements_screen() -> void:
 	await wait_frames(2)
 	home = main.get_current_screen() as HomeScreen
 	check_eq(home.get_stars_text(), "5", "total stars on Home")
-	var parts := home.get_rewards_text().split("|")
-	check_eq(parts[0], "2/%d" % AchievementTracker.DEFINITIONS.size(), "achievements unlocked (First Key, Chain Reaction)")
-	check_eq(parts[1], "1", "one Vault seal")
-	check_eq(parts[2], "0", "no Master seals")
+	check_eq(home.get_rewards_text(), "2/%d" % AchievementTracker.DEFINITIONS.size(), "achievements unlocked (First Key, Chain Reaction)")
+	check_eq(home.get_rank_text(), "KEYHOLDER", "135 points = Keyholder rank")
 	check(home.is_breathing(), "hero art breathes gently")
-	var card := home.get_node("%RewardsCard") as Control
-	check(card.size.y <= 140.0, "rewards row stays short (%d px)" % card.size.y)
-	var layout := home.get_node("Margin/Layout") as Control
-	check(layout.get_combined_minimum_size().y <= home.size.y - 88.0, "Home still fits a 16:9 phone (needs %d)" % layout.get_combined_minimum_size().y)
+	check(home.is_shining(), "Play button shine runs")
+	# Measure at real phone proportions (the test window is square).
+	var old_size := tree.root.size
+	tree.root.size = Vector2i(720, 1280)
+	await wait_frames(3)
+	var top := (home.get_node("%SettingsButton") as Control).get_global_rect().position.y
+	var bottom := home.get_view_all_button().get_global_rect().end.y
+	check(top >= 24.0, "Home top on screen with margin (%d)" % top)
+	check(bottom <= 1280.0 - 24.0, "Home fits a 16:9 phone (dock ends at %d)" % bottom)
+	tree.root.size = old_size
+	await wait_frames(2)
 	home.get_view_all_button().pressed.emit()
 	await wait_frames(1)
 	var screen := main.get_current_screen() as AchievementsScreen
 	check(screen != null, "View all opens the Achievements screen")
 	if screen != null:
 		check_eq(screen.get_row_count(), AchievementTracker.DEFINITIONS.size(), "every achievement listed")
+		await wait_frames(2)
+		var blocking := screen.get_list_controls().filter(func(c: Control) -> bool: return c.mouse_filter == Control.MOUSE_FILTER_STOP)
+		check(blocking.is_empty(), "nothing in the list blocks drag-scrolling (%d blocking)" % blocking.size())
+		check(screen.get_scroll().vertical_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER, "no scrollbar, drag to scroll")
 		main.handle_back()
 		await wait_frames(1)
 		check(main.get_current_screen() is HomeScreen, "back returns Home")
@@ -301,7 +355,7 @@ func test_daily_challenge_flow() -> void:
 	(main.get_current_screen() as SplashScreen).skip()
 	await wait_frames(1)
 	var home := main.get_current_screen() as HomeScreen
-	check(home.get_daily_button().text.ends_with("New puzzle"), "Home shows a new daily puzzle")
+	check_eq(home.get_daily_status(), "New puzzle", "Home shows a new daily puzzle")
 	home.get_daily_button().pressed.emit()
 	await wait_frames(1)
 	var daily := main.get_current_screen() as DailyScreen
@@ -331,7 +385,7 @@ func test_daily_challenge_flow() -> void:
 		check(daily.get_status_text().begins_with("Solved"), "solved status")
 	main.show_home()
 	await wait_frames(1)
-	check((main.get_current_screen() as HomeScreen).get_daily_button().text.ends_with("Solved"), "Home shows solved")
+	check_eq((main.get_current_screen() as HomeScreen).get_daily_status(), "Solved", "Home shows solved")
 	await _shutdown(main)
 
 
@@ -355,7 +409,7 @@ func _tap_wrong(game: GameScreen) -> bool:
 	var view := game.get_board_view()
 	var board := view.get_board()
 	for arrow: Arrow in board.get_arrows():
-		if not board.can_exit(arrow.id) and not board.is_locked(arrow.id):
+		if not board.can_exit(arrow.id) and not board.is_locked(arrow.id) and not view.is_marked_wrong(arrow.id):
 			view.tap_at(view.cell_to_local(arrow.cell))
 			return true
 	return false
@@ -450,8 +504,41 @@ func test_wrong_tap_is_counted() -> void:
 			view.tap_at(view.cell_to_local(arrow.cell))
 			break
 	check_eq(game.get_wrong_taps(), 1, "blocked tap counted")
+	var stuck_id := -1
+	for arrow: Arrow in board.get_arrows():
+		if view.is_marked_wrong(arrow.id):
+			stuck_id = arrow.id
+	check(stuck_id != -1 and view.get_arrow_view(stuck_id).is_marked_wrong, "the tried arrow turns red")
+	await wait_seconds(0.3)
+	check(view.get_arrow_view(stuck_id).has_wrong_mark(), "and shows a cross mark, not just colour")
+	view.tap_at(view.cell_to_local(board.get_arrow(stuck_id).cell))
+	check_eq(game.get_wrong_taps(), 1, "tapping the red arrow again costs nothing")
 	check(await _clear_level(game), "cleared anyway")
 	check(not game.get_complete_panel().is_clean_shown(), "no clean badge after a wrong tap")
+	await _shutdown(main)
+
+
+func test_red_arrow_clears_once_it_can_leave() -> void:
+	var main: Main = await _boot("flow_red")
+	var game: GameScreen = await _open_game(main)
+	await _start_generated_level(game, 10)
+	var view := game.get_board_view()
+	var board := view.get_board()
+	check(_tap_wrong(game), "tap a blocked arrow")
+	var red := -1
+	for arrow: Arrow in board.get_arrows():
+		if view.is_marked_wrong(arrow.id):
+			red = arrow.id
+	check(red != -1, "it is marked red")
+	var guard := 0
+	while board.get_arrow(red) != null and not board.can_exit(red) and guard < 200:
+		guard += 1
+		for arrow: Arrow in board.get_arrows():
+			if arrow.id != red and board.can_exit(arrow.id) and not board.is_master(arrow.id):
+				view.tap_at(view.cell_to_local(arrow.cell))
+				break
+	check(board.get_arrow(red) != null and board.can_exit(red), "the red arrow became free")
+	check(not view.is_marked_wrong(red), "and is no longer red")
 	await _shutdown(main)
 
 
@@ -480,18 +567,26 @@ func test_arrow_theme_picker_unlocks_and_applies() -> void:
 	var game: GameScreen = await _open_game(main)
 	main.open_settings()
 	var panel := main.get_settings_panel()
-	await wait_frames(2)
+	# Measure at real phone proportions (the test window is square).
+	var old_size := tree.root.size
+	tree.root.size = Vector2i(720, 1280)
+	await wait_frames(3)
 	var version := panel.get_node("%VersionLabel") as Control
+	var back := panel.get_node("%BackButton") as Control
 	var bottom := version.get_global_rect().end.y
-	check(bottom <= panel.get_global_rect().end.y + 0.5, "Settings still fits (version line ends at %d of %d)" % [bottom, panel.get_global_rect().end.y])
+	check(panel.get_global_rect().size.y <= 1280.5, "measured on a 720 x 1280 screen (%d)" % panel.get_global_rect().size.y)
+	check(back.get_global_rect().position.y >= 32.0, "Settings top (Back) keeps its margin (%d)" % back.get_global_rect().position.y)
+	check(bottom <= panel.get_global_rect().end.y + 0.5, "Settings fits a 16:9 phone (version line ends at %d of %d)" % [bottom, panel.get_global_rect().end.y])
+	tree.root.size = old_size
+	await wait_frames(2)
 	panel.choose_theme("emerald")
 	check_eq(main.get_settings().arrow_theme, "gold", "locked theme cannot be chosen")
-	check(panel.get_theme_caption().contains("250"), "caption shows the points needed")
+	check(panel.get_theme_caption().contains("500"), "caption shows the points needed")
 	main.handle_back()
-	main.get_progress().record_level_completed(50)
+	main.get_progress().record_level_completed(100)
 	main.open_settings()
 	panel.choose_theme("emerald")
-	check_eq(main.get_settings().arrow_theme, "emerald", "unlocked at 250 points")
+	check_eq(main.get_settings().arrow_theme, "emerald", "unlocked at 500 points")
 	check_eq(game.get_arrow_metal(), ArrowTheme.colors_of(ArrowTheme.find("emerald")), "open game recoloured right away")
 	main.handle_back()
 	main.get_progress().reset()
@@ -512,6 +607,9 @@ func test_first_levels_guide_new_players() -> void:
 	check_eq(game.get_hand_target(), -1, "hand hides after the move")
 	await wait_seconds(GameScreen.HAND_DELAY_SECONDS + 0.4)
 	check(game.get_hand_target() != -1, "and points at the next arrow")
+	var last_child := game.get_board_view().get_child(game.get_board_view().get_child_count() - 1)
+	check(last_child is TutorialHand, "hand drawn above the arrows")
+	check_eq((last_child as TutorialHand).z_index, 0, "but below overlays like Pause")
 	await _shutdown(main)
 
 
@@ -526,6 +624,52 @@ func test_hand_prefers_the_key_arrow() -> void:
 	check(board.can_exit(id) and holds_key, "level 4 hand points at the key arrow")
 	check_eq(levels.get_level(6).tip, "", "later tutorial levels have no tip")
 	check_eq(levels.get_level(6).guided_moves, 0, "and no hand")
+
+
+func test_music_plays_and_can_be_turned_off() -> void:
+	var main: Main = await _boot("flow_music")
+	main.show_home()
+	await wait_frames(1)
+	check(main.get_music().is_enabled() and main.get_music().is_playing(), "music on by default, from Home")
+	main.open_settings()
+	main.get_settings_panel().get_toggle("music_enabled").button_pressed = false
+	check(not main.get_settings().music_enabled, "setting saved")
+	await wait_seconds(Music.FADE_OUT_SECONDS + 0.3)
+	check(not main.get_music().is_playing(), "music fades out and stops")
+	var stream := load(Music.TRACK_PATH) as AudioStreamWAV
+	check(stream != null and stream.loop_mode == AudioStreamWAV.LOOP_FORWARD, "the track loops")
+	await _shutdown(main)
+
+
+func test_weekly_challenge_flow() -> void:
+	var main: Main = await _boot("flow_weekly")
+	main.show_home()
+	await wait_frames(1)
+	var home := main.get_current_screen() as HomeScreen
+	check_eq(home.get_weekly_text(), "0/5", "Home shows the weekly progress")
+	home.get_weekly_button().pressed.emit()
+	await wait_frames(1)
+	var screen := main.get_current_screen() as WeeklyScreen
+	check(screen != null, "Weekly screen opens")
+	screen.get_puzzle_button(0).pressed.emit()
+	await wait_frames(1)
+	var game := main.get_current_screen() as GameScreen
+	check(game != null and game.get_challenge() is WeeklyMode, "weekly puzzle 1 starts")
+	check(not game.get_move_budget().enabled, "no move limit, like the Daily")
+	game.get_board_view().finish_intro()
+	check(await _clear_level(game), "puzzle solved")
+	check_eq(game.get_complete_panel().get_title_text(), "PUZZLE 1 SOLVED", "result title")
+	check(main.get_weekly().is_solved(WeeklyChallenge.week_key(main.get_today()), 0), "result saved")
+	game.get_complete_panel().get_next_button().pressed.emit()
+	await wait_frames(1)
+	while is_instance_valid(game) and game.get_achievement_panel().visible:
+		game.get_achievement_panel().get_continue_button().pressed.emit()
+		await wait_frames(1)
+	check(main.get_current_screen() is WeeklyScreen, "Done returns to the Weekly screen")
+	main.show_home()
+	await wait_frames(1)
+	check_eq((main.get_current_screen() as HomeScreen).get_weekly_text(), "1/5", "Home updates to 1/5")
+	await _shutdown(main)
 
 
 func test_settings_save_and_apply() -> void:

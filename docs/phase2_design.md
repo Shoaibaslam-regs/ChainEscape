@@ -156,3 +156,27 @@ The existing architecture stays: rules in `scripts/core`, views in `scenes/board
   Pointing hand taps a movable arrow (prefers a key arrow): level 1 all 3
   moves, levels 2 and 4 the first move. Static (no tapping) with Reduce
   motion. Home footer line removed in the calm Home pass.
+- 2026-11-24 (user): arrow theme costs raised: Emerald 500, Sapphire 1200,
+  Amethyst 5000, Rose gold 15000 points (Gold free). Arrows drawn at 85% of the cell.
+- 2026-11-25 (user: levels too easy around 100; micro arrows; black holes;
+  own ideas; red wrong arrows):
+  - Wrong move: the tapped arrow stays red until it can leave; tapping a red
+    arrow again costs no move.
+  - Difficulty: ramp 80 -> 40 levels; extra hardness from level 20 on a
+    square-root curve (0.48 at 100, 0.9 cap at 300); Vaults >= +0.25 above
+    the levels around them. New tightening pass chains free-at-start arrows
+    to later neighbours (solver-verified): ~10% free at full hardness.
+  - Boards grow from level 70 up to 10 x 13 (more, smaller arrows).
+  - New twists: Black holes (arrow enters, exits the paired white hole, same
+    direction; 1-2 pairs, violet/teal) and Mirrors ("/" "\" turn 90 deg).
+    Debut as Vault challenges 5 and 6 (levels 121, 147); merges from 6.
+  - Next level is generated in the background (worker thread) while playing.
+- 2026-11-25 (user): praise words are small gold words rising from the
+  released arrow; Level complete = Next level + Home (+ "Retry for 3 stars"
+  link when < 3 stars, replays only the level just finished); status row:
+  arrows + locks left, moves right; red wrong arrows carry a white cross
+  (colour-blind safe); background music (Settings > Music, starts on Home;
+  synthesised placeholder at assets/audio/music.wav, to be replaced by a
+  licensed track under the same name); Weekly challenge: 5 shared puzzles
+  per Monday-Sunday week (0/1/1/2/2 twists, rising hardness and size), any
+  order, no move limit, Weekly seal for all 5; Home shows Daily | Weekly.

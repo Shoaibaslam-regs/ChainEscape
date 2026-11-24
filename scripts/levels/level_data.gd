@@ -4,7 +4,10 @@ extends Resource
 ## are easy to write and review:
 ##   ^ v < >  an arrow pointing up / down / left / right
 ##   #        a wall (blocks every path, never moves)
+##   / \      a mirror (turns a passing arrow 90 degrees)
 ##   .        an empty cell
+## Black holes are listed in [member portals] (their cells are "." in the
+## layout): black hole (x, y) -> white hole (z, w).
 ## Spaces between characters are ignored; each line is one row.
 
 const SYMBOLS: Dictionary[String, Arrow.Direction] = {
@@ -15,6 +18,10 @@ const SYMBOLS: Dictionary[String, Arrow.Direction] = {
 }
 const EMPTY_SYMBOL := "."
 const WALL_SYMBOL := "#"
+const MIRROR_SYMBOLS: Dictionary[String, int] = {
+	"/": PathTracer.MIRROR_SLASH,
+	"\\": PathTracer.MIRROR_BACKSLASH,
+}
 const NO_CELL := Vector2i(-1, -1)
 
 ## Challenge twists (Phase 2 design: Vault challenges).
@@ -22,13 +29,19 @@ const TWIST_DOUBLE_LOCKS := "double_locks"
 const TWIST_WALLS := "walls"
 const TWIST_LONG_CHAINS := "long_chains"
 const TWIST_HIDDEN_LINKS := "hidden_links"
+const TWIST_BLACK_HOLES := "black_holes"
+const TWIST_MIRRORS := "mirrors"
 const TWIST_NAMES: Dictionary[String, String] = {
+	TWIST_BLACK_HOLES: "Black holes",
+	TWIST_MIRRORS: "Mirrors",
 	TWIST_DOUBLE_LOCKS: "Double locks",
 	TWIST_WALLS: "Walls",
 	TWIST_LONG_CHAINS: "Long chains",
 	TWIST_HIDDEN_LINKS: "Hidden links",
 }
 const TWIST_DESCRIPTIONS: Dictionary[String, String] = {
+	TWIST_BLACK_HOLES: "An arrow that flies into a black hole shoots out of its white twin and keeps going.",
+	TWIST_MIRRORS: "Mirrors turn a passing arrow sideways. Follow the bounce to see where it goes.",
 	TWIST_DOUBLE_LOCKS: "Some locks hang from two chains. Clear both keys to open them.",
 	TWIST_WALLS: "Solid walls block every path, for good. Find the way around them.",
 	TWIST_LONG_CHAINS: "Chains of four or more arrows that must open in order.",
@@ -44,6 +57,8 @@ const TWIST_DESCRIPTIONS: Dictionary[String, String] = {
 @export_multiline var layout: String = ""
 ## Each entry is (x, y, z, w): the arrow at (x, y) waits for the arrow at (z, w).
 @export var dependencies: Array[Vector4i] = []
+## Black hole (x, y) -> white hole (z, w) pairs.
+@export var portals: Array[Vector4i] = []
 ## Cell of the master arrow (releasing it clears the level), or NO_CELL.
 @export var master_cell: Vector2i = NO_CELL
 ## Vault challenge level (harder, with twists).
@@ -82,6 +97,12 @@ func build_board(errors: PackedStringArray = PackedStringArray()) -> BoardState:
 				board.add_arrow(Vector2i(x, y), SYMBOLS[symbol])
 			elif symbol == WALL_SYMBOL:
 				board.add_wall(Vector2i(x, y))
+			elif MIRROR_SYMBOLS.has(symbol):
+				board.add_mirror(Vector2i(x, y), MIRROR_SYMBOLS[symbol])
+
+	for portal: Vector4i in portals:
+		if not board.add_portal(Vector2i(portal.x, portal.y), Vector2i(portal.z, portal.w)):
+			errors.append("%s: black hole %s is outside the board or on a busy cell" % [_describe(), portal])
 
 	for link: Vector4i in dependencies:
 		var dependent_cell := Vector2i(link.x, link.y)
@@ -124,7 +145,7 @@ func _parse_rows(errors: PackedStringArray) -> PackedStringArray:
 			errors.append("%s: row %d has %d cells, expected %d" % [_describe(), y, rows[y].length(), width])
 		for x: int in rows[y].length():
 			var symbol := rows[y][x]
-			if symbol != EMPTY_SYMBOL and symbol != WALL_SYMBOL and not SYMBOLS.has(symbol):
+			if symbol != EMPTY_SYMBOL and symbol != WALL_SYMBOL and not SYMBOLS.has(symbol) and not MIRROR_SYMBOLS.has(symbol):
 				errors.append("%s: unknown symbol '%s' at (%d, %d)" % [_describe(), symbol, x, y])
 	return rows
 

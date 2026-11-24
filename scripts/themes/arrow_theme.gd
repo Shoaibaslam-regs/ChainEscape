@@ -9,10 +9,10 @@ const DEFAULT_ID := "gold"
 ## id, name, points needed, then the light / mid / dark metal stops.
 const THEMES: Array[Dictionary] = [
 	{"id": "gold", "name": "Gold", "points": 0, "colors": [Color("FFF0BF"), Color("E8B04A"), Color("9C6B1C")]},
-	{"id": "emerald", "name": "Emerald", "points": 250, "colors": [Color("DFFFE6"), Color("4CB866"), Color("1F6B34")]},
-	{"id": "sapphire", "name": "Sapphire", "points": 750, "colors": [Color("D8E6FF"), Color("4F7FE0"), Color("1F3A80")]},
-	{"id": "amethyst", "name": "Amethyst", "points": 1500, "colors": [Color("EEDCFF"), Color("A673E8"), Color("5A2E99")]},
-	{"id": "rose_gold", "name": "Rose gold", "points": 3000, "colors": [Color("FFE3D6"), Color("E0957A"), Color("8A4A38")]},
+	{"id": "emerald", "name": "Emerald", "points": 500, "colors": [Color("DFFFE6"), Color("4CB866"), Color("1F6B34")]},
+	{"id": "sapphire", "name": "Sapphire", "points": 1200, "colors": [Color("D8E6FF"), Color("4F7FE0"), Color("1F3A80")]},
+	{"id": "amethyst", "name": "Amethyst", "points": 5000, "colors": [Color("EEDCFF"), Color("A673E8"), Color("5A2E99")]},
+	{"id": "rose_gold", "name": "Rose gold", "points": 15000, "colors": [Color("FFE3D6"), Color("E0957A"), Color("8A4A38")]},
 ]
 
 

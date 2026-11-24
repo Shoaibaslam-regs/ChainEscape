@@ -7,8 +7,8 @@ extends Control
 
 signal home_requested
 signal settings_requested
-## The Daily challenge was solved and the player is done with it.
-signal daily_finished
+## A Daily or Weekly puzzle was solved and the player is done with it.
+signal challenge_finished
 
 enum State { INTRO, PLAYING, PAUSED, OUT_OF_MOVES, COMPLETE, ACHIEVEMENT, ERROR }
 
@@ -63,9 +63,8 @@ var _pending_unlocks: Array[Dictionary] = []
 var _release_streak := ReleaseStreak.new()
 var _current_level: LevelData
 var _master_released: bool = false
-## Daily challenge mode: the date key ("" when playing the numbered levels).
-var _daily_key: String = ""
-var _daily_store: DailyStore
+## Set while playing a Daily or Weekly puzzle (null for numbered levels).
+var _challenge: ChallengeMode
 ## What to do once all pending achievements have been shown.
 var _after_achievements: Callable
 
@@ -76,6 +75,7 @@ func _ready() -> void:
 	_board_view.arrow_exited.connect(_on_arrow_exited)
 	_board_view.arrow_blocked.connect(_on_wrong_tap.unbind(2))
 	_board_view.arrow_locked.connect(_on_locked_tap.unbind(2))
+	_board_view.arrow_retapped.connect(_on_retap.unbind(1))
 	_board_view.chain_broken.connect(_on_chain_broken.unbind(2))
 	_board_view.board_cleared.connect(_on_board_cleared)
 	_board_view.master_released.connect(func(_master: Arrow) -> void: _master_released = true)
@@ -93,7 +93,8 @@ func _ready() -> void:
 	_pause_panel.settings_requested.connect(settings_requested.emit)
 	_pause_panel.home_requested.connect(home_requested.emit)
 	_complete_panel.next_requested.connect(_on_complete_next)
-	_complete_panel.replay_requested.connect(_leave_complete.bind(restart))
+	_complete_panel.home_requested.connect(_leave_complete.bind(home_requested.emit))
+	_complete_panel.retry_requested.connect(_leave_complete.bind(restart))
 	_achievement_panel.continue_requested.connect(_show_next_achievement_or_continue)
 
 
@@ -111,7 +112,7 @@ func setup(levels: LevelSequence, progress: ProgressStore, achievements: Achieve
 ## Loads and shows level [param level_number] (1-based). Shows an error
 ## message instead of the board if the level is missing or invalid.
 func play_level(level_number: int) -> void:
-	_daily_key = ""
+	_challenge = null
 	_level_number = level_number
 	var level := _levels.get_level(level_number) if _levels != null else null
 	_load(level, "LEVEL %d" % level_number, "Level %d is not available." % level_number)
@@ -119,13 +120,22 @@ func play_level(level_number: int) -> void:
 
 ## Plays the Daily challenge for [param date_key].
 func play_daily(date_key: String, level: LevelData, store: DailyStore) -> void:
-	_daily_key = date_key
-	_daily_store = store
-	_load(level, "DAILY", "Today's puzzle is not available.")
+	play_challenge(DailyMode.new(date_key, store), level)
 
 
+## Plays a Daily or Weekly puzzle: no move limit, its own texts and saving.
+func play_challenge(mode: ChallengeMode, level: LevelData) -> void:
+	_challenge = mode
+	_load(level, mode.title(), mode.missing_message())
+
+
+## True while playing a Daily or Weekly puzzle (not a numbered level).
 func is_daily() -> bool:
-	return not _daily_key.is_empty()
+	return _challenge != null
+
+
+func get_challenge() -> ChallengeMode:
+	return _challenge
 
 
 func _load(level: LevelData, title: String, missing_message: String) -> void:
@@ -152,11 +162,16 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 		return
 	_current_level = level
 	_message.hide()
+	# Prepare the next level while this one is played.
+	if not is_daily() and _levels != null:
+		_levels.prefetch(_level_number + 1)
 	_overline.text = _overline_for(level)
 	_restart_button.disabled = false
 	_pause_button.disabled = false
 	_board_view.hide_links = level.has_twist(LevelData.TWIST_HIDDEN_LINKS)
 	_board_view.set_board(board)
+	# New arrow views were just added; keep the hand drawn above them.
+	_board_view.move_child(_hand, -1)
 	var has_locks := _count_locked(board) > 0
 	_locks_group.visible = has_locks
 	_locks_divider.visible = has_locks
@@ -251,7 +266,7 @@ func _on_twist_popup_dismissed() -> void:
 
 func _overline_for(level: LevelData) -> String:
 	if is_daily():
-		return "DAILY CHALLENGE · %s" % DailyDate.short_label(_daily_key)
+		return _challenge.overline()
 	if level.master_cell != LevelData.NO_CELL:
 		return "MASTER LEVEL"
 	if level.is_challenge:
@@ -261,7 +276,7 @@ func _overline_for(level: LevelData) -> String:
 
 func restart() -> void:
 	if is_daily():
-		play_daily(_daily_key, _current_level, _daily_store)
+		play_challenge(_challenge, _current_level)
 	else:
 		play_level(_level_number)
 
@@ -277,7 +292,7 @@ func pause() -> void:
 	_release_streak.reset()
 	_board_view.finish_intro()
 	_play_sound(Feedback.Sound.BUTTON)
-	var title := "Daily · %s" % DailyDate.short_label(_daily_key) if is_daily() else "Level %d" % _level_number
+	var title := _challenge.pause_title() if is_daily() else "Level %d" % _level_number
 	_pause_panel.open(title, _board_view.get_board().arrow_count())
 
 
@@ -373,7 +388,7 @@ func get_status_text() -> String:
 
 ## Quick releases build a streak: each one plays the release note a step
 ## higher, and milestones show a praise word with a sparkle.
-func _on_arrow_exited(_arrow: Arrow) -> void:
+func _on_arrow_exited(arrow: Arrow) -> void:
 	if _guided_left > 0:
 		_guided_left -= 1
 		_schedule_hand()
@@ -381,7 +396,7 @@ func _on_arrow_exited(_arrow: Arrow) -> void:
 	_play_sound(Feedback.Sound.EXIT, ReleaseStreak.pitch_for(streak))
 	var praise := ReleaseStreak.praise_for(streak)
 	if not praise.is_empty():
-		_praise_popup.show_praise(praise)
+		_praise_popup.show_praise(praise, _praise_point(arrow))
 		_play_sound(Feedback.Sound.PRAISE)
 	_update_counters()
 
@@ -404,6 +419,18 @@ func _on_locked_tap() -> void:
 		_play_sound(Feedback.Sound.BLOCKED)
 		return
 	_on_wrong_tap()
+
+
+## Tapping a red arrow again only reminds: it is still stuck, no move spent.
+func _on_retap() -> void:
+	_release_streak.reset()
+	_play_sound(Feedback.Sound.BLOCKED, 0.85)
+
+
+## Where the released arrow stood, in this screen's coordinates.
+func _praise_point(arrow: Arrow) -> Vector2:
+	var on_board := _board_view.cell_to_local(arrow.cell)
+	return get_global_transform().affine_inverse() * (_board_view.get_global_transform() * on_board)
 
 
 func _out_of_moves() -> void:
@@ -469,8 +496,7 @@ func _on_chain_broken() -> void:
 func _on_board_cleared() -> void:
 	_state = State.COMPLETE
 	if is_daily():
-		if _daily_store != null:
-			_daily_store.record_solve(_daily_key, _wrong_taps)
+		_challenge.record_solve(_wrong_taps)
 	elif _progress != null:
 		_progress.record_level_completed(_level_number)
 		_progress.record_stars(_level_number, ProgressStore.stars_for(_wrong_taps))
@@ -480,24 +506,23 @@ func _on_board_cleared() -> void:
 	_pause_button.disabled = true
 	_restart_button.disabled = true
 	var level_number := _level_number
-	var daily_key := _daily_key
+	var challenge := _challenge
 	await get_tree().create_timer(COMPLETE_DELAY_SECONDS).timeout
 	# The player may have left or restarted during the delay.
-	if not is_inside_tree() or _state != State.COMPLETE or _level_number != level_number or _daily_key != daily_key:
+	if not is_inside_tree() or _state != State.COMPLETE or _level_number != level_number or _challenge != challenge:
 		return
 	_play_sound(Feedback.Sound.LEVEL_COMPLETE)
 	if _feedback != null:
 		_feedback.vibrate(COMPLETE_VIBRATION_MS)
 	if is_daily():
-		var streak := _daily_store.current_streak(_daily_key) if _daily_store != null else 0
-		_complete_panel.open_daily(DailyDate.long_label(_daily_key), _chains_broken, _wrong_taps, streak)
+		_complete_panel.open_challenge(_challenge, _chains_broken, _wrong_taps)
 	else:
 		var upcoming := _levels.next_special_label(_level_number) if _levels != null else ""
 		_complete_panel.open(_level_number, _chains_broken, _wrong_taps, was_challenge, _master_released, ProgressStore.stars_for(_wrong_taps), upcoming)
 
 
 func _on_complete_next() -> void:
-	_leave_complete(daily_finished.emit if is_daily() else play_next_level)
+	_leave_complete(challenge_finished.emit if is_daily() else play_next_level)
 
 
 ## Leaving the completion panel shows any new achievements first, then
@@ -524,9 +549,13 @@ func _show_next_achievement_or_continue() -> void:
 			action.call()
 		return
 	_state = State.ACHIEVEMENT
-	var caption := "LEVEL %d" % (_level_number + 1) if _after_achievements == play_next_level else "REPLAY LEVEL %d" % _level_number
+	var caption := "HOME"
+	if _after_achievements == play_next_level:
+		caption = "LEVEL %d" % (_level_number + 1)
+	elif _after_achievements == restart:
+		caption = "RETRY LEVEL %d" % _level_number
 	if is_daily():
-		caption = "REPLAY TODAY'S PUZZLE" if _after_achievements == restart else "BACK TO DAILY"
+		caption = _challenge.done_label() if _after_achievements != home_requested.emit else "HOME"
 	_achievement_panel.open(_pending_unlocks.pop_front(), _achievements, caption)
 	_play_sound(Feedback.Sound.UNLOCK)
 
