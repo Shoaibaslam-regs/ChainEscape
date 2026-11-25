@@ -1,13 +1,13 @@
 class_name Music
 extends Node
 ## Quiet background music: one looping track that fades in and out.
-## The track is res://assets/audio/music.wav (a synthesised placeholder until
-## a licensed track replaces it under the same name). Off when the player
-## turns music off in Settings.
+## The track is "November Snow" by cynicmusic (CC0, OpenGameArt; see
+## docs/audio_previews/MUSIC_SOURCES.md). Off when the player turns music
+## off in Settings.
 
-const TRACK_PATH := "res://assets/audio/music.wav"
+const TRACK_PATH := "res://assets/audio/music_november_snow.mp3"
 ## Kept well under the sound effects.
-const VOLUME_DB := -16.0
+const VOLUME_DB := -20.0
 const SILENT_DB := -60.0
 const FADE_IN_SECONDS := 2.5
 const FADE_OUT_SECONDS := 0.8

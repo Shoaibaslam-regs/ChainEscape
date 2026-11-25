@@ -11,12 +11,13 @@ var _paths: PackedStringArray = []
 ## Boots Main with throwaway save files so the player's data is untouched.
 func _boot(name: String) -> Main:
 	var main := (load(MAIN_SCENE_PATH) as PackedScene).instantiate() as Main
-	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily"), temp_save_path(name + "_weekly")])
+	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily"), temp_save_path(name + "_weekly"), temp_save_path(name + "_hints")])
 	main.save_path = _paths[0]
 	main.settings_path = _paths[1]
 	main.achievements_path = _paths[2]
 	main.daily_path = _paths[3]
 	main.weekly_path = _paths[4]
+	main.hints_path = _paths[5]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -31,6 +32,7 @@ func _relaunch() -> Main:
 	main.achievements_path = _paths[2]
 	main.daily_path = _paths[3]
 	main.weekly_path = _paths[4]
+	main.hints_path = _paths[5]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -240,6 +242,12 @@ func test_twist_debut_popup_over_board() -> void:
 	check(popup.visible, "pop-up rises over the board once the arrows land")
 	check_eq(popup.get_overline_text(), "NEW TWIST", "new twist")
 	check_eq(popup.get_title_text(), "DOUBLE LOCKS", "named")
+	var all_text := popup.get_all_text().to_lower()
+	check_eq(all_text.count("double lock"), 1, "the twist's name is said once (%s)" % all_text)
+	check_eq(popup.get_stage_icons().size(), 1, "its picture is on the stage")
+	await wait_seconds(1.0)
+	check(is_equal_approx(popup.get_stage_icons()[0].scale.x, 1.0), "the picture has popped in to full size")
+	check(popup.is_floating(), "and floats gently")
 	popup.get_got_it_button().pressed.emit()
 	check_eq(game.get_state(), GameScreen.State.PLAYING, "GOT IT starts play")
 	check(await _clear_level(game), "challenge cleared")
@@ -622,8 +630,8 @@ func test_hand_prefers_the_key_arrow() -> void:
 		if board.get_pending_requirements(other.id).has(board.get_arrow(id)):
 			holds_key = true
 	check(board.can_exit(id) and holds_key, "level 4 hand points at the key arrow")
-	check_eq(levels.get_level(6).tip, "", "later tutorial levels have no tip")
-	check_eq(levels.get_level(6).guided_moves, 0, "and no hand")
+	check_eq(levels.get_level(7).tip, "", "later tutorial levels have no tip")
+	check_eq(levels.get_level(7).guided_moves, 0, "and no hand")
 
 
 func test_music_plays_and_can_be_turned_off() -> void:
@@ -636,8 +644,8 @@ func test_music_plays_and_can_be_turned_off() -> void:
 	check(not main.get_settings().music_enabled, "setting saved")
 	await wait_seconds(Music.FADE_OUT_SECONDS + 0.3)
 	check(not main.get_music().is_playing(), "music fades out and stops")
-	var stream := load(Music.TRACK_PATH) as AudioStreamWAV
-	check(stream != null and stream.loop_mode == AudioStreamWAV.LOOP_FORWARD, "the track loops")
+	var stream := load(Music.TRACK_PATH) as AudioStreamMP3
+	check(stream != null and stream.loop, "the track loops")
 	await _shutdown(main)
 
 
@@ -669,6 +677,39 @@ func test_weekly_challenge_flow() -> void:
 	main.show_home()
 	await wait_frames(1)
 	check_eq((main.get_current_screen() as HomeScreen).get_weekly_text(), "1/5", "Home updates to 1/5")
+	await _shutdown(main)
+
+
+func test_hint_shows_a_playable_arrow_and_counts_down() -> void:
+	var main: Main = await _boot("flow_hints")
+	var game: GameScreen = await _open_game(main)
+	await _start_generated_level(game, 30)
+	check(game.get_hint_button().visible, "hint button on numbered levels")
+	check_eq(main.get_hints().get_hints(), HintStore.STARTER_HINTS, "starts with the starter hints")
+	game.use_hint()
+	var target := game.get_hint_target()
+	var board := game.get_board_view().get_board()
+	check(target != -1 and board.can_exit(target), "the glowing arrow can really leave")
+	check_eq(main.get_hints().get_hints(), HintStore.STARTER_HINTS - 1, "one hint used")
+	var view := game.get_board_view()
+	view.tap_at(view.cell_to_local(board.get_arrow(target).cell))
+	check_eq(game.get_hint_target(), -1, "the glow goes when the arrow leaves")
+	check_eq(game.get_wrong_taps(), 0, "a hint never costs a move")
+	main.get_hints().use_hint()
+	check_eq(main.get_hints().get_hints(), 0, "none left")
+	check_eq(game.get_hint_count_text(), "0", "the badge follows the count")
+	game.use_hint()
+	check_eq(game.get_hint_target(), -1, "no glow without hints")
+	check_eq(main.get_hints().get_hints(), 0, "count never goes below zero")
+	await _shutdown(main)
+
+
+func test_no_hints_in_daily() -> void:
+	var main: Main = await _boot("flow_hints_daily")
+	main.show_daily_game()
+	await wait_frames(1)
+	var game := main.get_current_screen() as GameScreen
+	check(not game.get_hint_button().visible, "Daily stays pure: no hint button")
 	await _shutdown(main)
 
 

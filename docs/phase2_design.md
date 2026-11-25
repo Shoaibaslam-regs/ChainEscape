@@ -180,3 +180,26 @@ The existing architecture stays: rules in `scripts/core`, views in `scenes/board
   licensed track under the same name); Weekly challenge: 5 shared puzzles
   per Monday-Sunday week (0/1/1/2/2 twists, rising hardness and size), any
   order, no move limit, Weekly seal for all 5; Home shows Daily | Weekly.
+- 2026-11-25 (user approved, after previews on the phone):
+  - App icon: royal blue, gold arrow under two crossing chains, steel
+    padlock hanging on the crossing (assets/brand/app_icon, adaptive layers).
+  - Splash: black like Home (gold rays + dust); the icon's picture in the
+    game's gold/steel builds up: arrow grows, chains slide in from top and
+    bottom, padlock drops and snaps, title rises. Sounds: rise, chain
+    rattle + clink, padlock snap (option D), title chime.
+  - Home art = the splash picture. Game stays black + gold (no blue tint).
+  - Music: "November Snow" by cynicmusic (CC0, OpenGameArt); sources in
+    docs/audio_previews/MUSIC_SOURCES.md.
+  - Gameplay: chains reach up to 4 cells (never cross, never pass over an
+    arrow), more locks/double keys, late boards up to 10 x 15, arrows go on
+    finger lift (slide off to cancel).
+- 2026-11-25 (installed on the user's phone):
+  - Chains block flight paths until their key arrow leaves (not on hidden-
+    links levels); tapping an arrow blocked by a chain flashes that chain's
+    key. Level 6 teaches it (extra chain + tip). Generator repairs chain
+    seals; levels 1-400 verified solvable.
+  - Twist pop-up: the twist picture large and animated on a gold-ray stage,
+    its name said once, one line on how it works.
+  - Hints (earning plan step 1, offline): 2 starter hints, +1 free every 5
+    levels cleared (from the research; pending the user's confirmation),
+    numbered levels only, glow on the most useful free arrow.

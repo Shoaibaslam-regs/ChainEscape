@@ -84,14 +84,10 @@ def band_noise(duration, low_hz, high_hz, rng):
 def main():
     noise = random.Random(7)
 
-    # Exit: a short, soft, rounded pluck (wooden-marimba-like). Pitched at C5;
-    # the game raises it along a pentatonic scale during quick release streaks.
-    def exit_sample(t):
-        body = tone(523.25, t) * envelope(t, 0.002, 0.07)
-        overtone = tone(523.25 * 4.0, t) * envelope(t, 0.001, 0.012) * 0.35
-        knock = tone(1046.5, t) * envelope(t, 0.001, 0.02) * 0.25
-        return body + overtone + knock
-    save("exit", render(0.3, exit_sample), 0.55)
+    # Exit (arrow release) is NOT synthesised: assets/audio/exit.wav is a real
+    # recorded soft whoosh ("swish-9", Swishes Sound Pack, CC0, OpenGameArt;
+    # see docs/audio_previews/MUSIC_SOURCES.md). The game still raises its
+    # pitch along a pentatonic scale during quick release streaks.
 
     # Praise: a bright two-note sparkle under the "NICE!" / "SWEET!" words.
     def praise_sample(t):
@@ -135,6 +131,49 @@ def main():
         ring *= envelope(t, 0.001, 0.07) * 0.32
         return click + thunk + ring
     save("link_join", render(0.35, link_join_sample), 0.6)
+
+    # Splash: the arrow grows out of the centre. A soft swell of air with a
+    # warm tone rising underneath (no sharp edges).
+    swell_rng = random.Random("chain-escape-splash-rise")
+    swell_air = band_noise(0.6, 300, 2400, swell_rng)
+    def splash_rise_sample(t):
+        shape = math.sin(math.pi * min(t / 0.6, 1.0)) ** 1.5
+        freq = 196.0 + 196.0 * (t / 0.6) ** 1.4
+        warm = 0.55 * tone(freq, t) + 0.2 * tone(freq * 2.0, t)
+        air = swell_air[min(int(t * RATE), len(swell_air) - 1)] * 0.35
+        return (warm + air) * shape
+    save("splash_rise", render(0.6, splash_rise_sample), 0.45)
+
+    # Splash: a chain sliding in. A quick run of small, bright link ticks
+    # that speed up, like links tumbling over each other.
+    ticks = [0.0, 0.07, 0.125, 0.17, 0.205, 0.235]
+    def chain_slide_sample(t):
+        value = 0.0
+        for i, start in enumerate(ticks):
+            dt = t - start
+            if dt < 0 or dt > 0.06:
+                continue
+            ring = tone(2900.0 + 230.0 * i, dt) * 0.6 + tone(4300.0 + 170.0 * i, dt) * 0.35
+            value += ring * math.exp(-dt / 0.012) * (0.55 + 0.08 * i)
+        return value
+    save("chain_slide", render(0.3, chain_slide_sample), 0.32)
+
+    # Splash padlock snap: NOT generated here. assets/audio/lock_snap.wav is
+    # option "D" (latch slide + bright snap), chosen by the user; its recipe
+    # lives with the previews (docs/audio_previews/lock_D_padlock_snap.wav).
+
+    # Splash: the title appears. A warm, quiet D-major chime (D5 F#5 A5),
+    # notes rolled gently one after another.
+    def title_chime_sample(t):
+        value = 0.0
+        for delay, freq in ((0.0, 587.33), (0.06, 739.99), (0.12, 880.0)):
+            dt = t - delay
+            if dt < 0:
+                continue
+            bell = tone(freq, dt) + 0.3 * tone(freq * 2.0, dt) * math.exp(-dt / 0.25)
+            value += bell * envelope(dt, 0.01, 0.55) * 0.33
+        return value
+    save("title_chime", render(1.4, title_chime_sample), 0.42)
 
     # Blocked: a soft, low wooden knock.
     def blocked_sample(t):

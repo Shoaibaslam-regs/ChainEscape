@@ -96,14 +96,20 @@ func test_tap_empty_or_outside_does_nothing() -> void:
 	await _teardown()
 
 
-func test_mouse_click_input_triggers_tap() -> void:
+func test_press_then_lift_releases_arrow() -> void:
 	await _setup()
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	click.pressed = true
 	click.position = _view.cell_to_local(Vector2i(2, 1))
 	_view._gui_input(click)
-	check_eq(_exited.size(), 1, "left click exits arrow")
+	check_eq(_exited.size(), 0, "pressing alone does not release the arrow")
+	var lift := InputEventMouseButton.new()
+	lift.button_index = MOUSE_BUTTON_LEFT
+	lift.pressed = false
+	lift.position = click.position
+	_view._gui_input(lift)
+	check_eq(_exited.size(), 1, "lifting the finger releases it")
 	await _teardown()
 
 
@@ -266,4 +272,40 @@ func test_walled_in_tap_is_blocked() -> void:
 	if _blocked.size() == 1:
 		check(_blocked[0][1] == null, "no arrow blocker: it's a wall")
 	check(_exited.is_empty(), "did not exit")
+	await _teardown()
+
+
+func test_arrow_goes_on_lift_not_on_touch() -> void:
+	var view := BoardView.new()
+	view.size = Vector2(400, 400)
+	tree.root.add_child(view)
+	var level := LevelData.new()
+	level.layout = "> . .\n. . .\n. . ."
+	view.set_board(level.build_board())
+	await wait_frames(1)
+	var cell_pos := view.cell_to_local(Vector2i(0, 0))
+	view.press_at(cell_pos)
+	check_eq(view.get_board().arrow_count(), 1, "touching does not release the arrow")
+	view.release_at(view.cell_to_local(Vector2i(2, 2)))
+	check_eq(view.get_board().arrow_count(), 1, "sliding off and lifting cancels")
+	view.press_at(cell_pos)
+	view.release_at(cell_pos + Vector2(3, 2))
+	check_eq(view.get_board().arrow_count(), 0, "lifting on the same arrow releases it")
+	view.queue_free()
+
+
+func test_tap_blocked_by_chain_flashes_its_key() -> void:
+	var board := BoardState.new(Vector2i(3, 3))
+	var lock := board.add_arrow(Vector2i(0, 0), Arrow.Direction.UP)
+	var key := board.add_arrow(Vector2i(2, 2), Arrow.Direction.DOWN)
+	board.add_dependency(lock, key)
+	var runner := board.add_arrow(Vector2i(0, 1), Arrow.Direction.RIGHT)
+	await _setup(board)
+	var blocked: Array = []
+	_view.arrow_blocked.connect(func(arrow: Arrow, blocker: Arrow) -> void: blocked.append([arrow.id, blocker.id if blocker != null else -1]))
+	_view.tap_at(_view.cell_to_local(Vector2i(0, 1)))
+	check_eq(blocked.size(), 1, "tap counts as blocked")
+	if blocked.size() == 1:
+		check_eq(blocked[0], [runner, key], "the chain's key arrow is shown as the cause")
+	check(_view.is_marked_wrong(runner), "and the arrow turns red")
 	await _teardown()

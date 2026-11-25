@@ -86,20 +86,31 @@ func test_theme_uses_cairo_and_defines_styles() -> void:
 	check(theme.has_stylebox("normal", "PrimaryButton"), "primary button style")
 
 
-func test_links_fly_in_from_off_screen_and_clink() -> void:
+func test_splash_builds_the_icon_with_its_sounds() -> void:
 	await _open_splash()
 	var feedback := Feedback.new()
 	tree.root.add_child(feedback)
 	await wait_frames(1)
+	var heard: Array[Feedback.Sound] = []
 	_splash.play(false, feedback)
 	await wait_frames(1)
-	var left: Control = _splash.get_node("%LeftLink")
-	var right: Control = _splash.get_node("%RightLink")
-	check(left.global_position.x + left.size.x * 0.3 < 0.0, "steel link starts off the left edge")
-	check(right.global_position.x + right.size.x * 0.4 > _splash.get_viewport_rect().size.x, "gold link starts off the right edge")
-	await wait_seconds(SplashScreen.JOIN_TIME + 0.3)
-	check(is_equal_approx(left.position.x, 0.0) and is_equal_approx(right.position.x, 0.0), "links attached")
-	check_eq(feedback.last_sound, Feedback.Sound.LINK_JOIN, "clink played when they attach")
+	var arrow := _splash.get_layer("arrow")
+	var chain_a := _splash.get_layer("chain_a")
+	var chain_b := _splash.get_layer("chain_b")
+	var lock := _splash.get_layer("lock")
+	check(arrow.scale.x < 0.5, "the arrow starts small in the centre")
+	check(chain_a.position.y < 0.0 and chain_b.position.y > 0.0, "one chain starts above, the other below")
+	check(lock.modulate.a < 0.1, "the lock is not there yet")
+	# Note each sound as it plays.
+	for step: int in 70:
+		await wait_seconds(0.04)
+		if heard.is_empty() or heard.back() != feedback.last_sound:
+			heard.append(feedback.last_sound)
+	check(is_equal_approx(chain_a.position.y, 0.0) and is_equal_approx(chain_b.position.y, 0.0), "both chains in place")
+	check(is_equal_approx(lock.position.y, 0.0) and lock.modulate.a > 0.99, "the lock sits on the crossing")
+	for sound: Feedback.Sound in [Feedback.Sound.SPLASH_RISE, Feedback.Sound.CHAIN_SLIDE, Feedback.Sound.LINK_JOIN, Feedback.Sound.LOCK_SNAP, Feedback.Sound.TITLE_CHIME]:
+		check(heard.has(sound), "splash plays %s" % Feedback.Sound.keys()[sound])
+	check(heard.find(Feedback.Sound.LOCK_SNAP) < heard.find(Feedback.Sound.TITLE_CHIME), "lock before the title chime")
 	feedback.queue_free()
 	await _close_splash()
 

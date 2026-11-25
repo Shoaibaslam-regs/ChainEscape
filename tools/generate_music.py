@@ -1,32 +1,34 @@
 #!/usr/bin/env python3
-"""Synthesises Chain Escape's placeholder background music: a calm,
-seamlessly looping ambient piece (soft chord pads, a low root, and sparse
-bell notes with a gentle echo). Original and licence-free; meant to be
-replaced by a chosen licensed track later (same file name).
+"""Synthesises Chain Escape's background music: a very calm, seamlessly
+looping ambient bed of soft, warm, low chord pads that change slowly. No
+bells or high notes (the first version's bells were irritating). Original
+and licence-free; replace with a chosen licensed track under the same name
+whenever wanted.
 
-Run from the project root:  python3 tools/generate_music.py
+Run from the project root:  python3 tools/generate_music.py [output.wav]
 """
 import math
 import random
 import struct
+import sys
 import wave
 from pathlib import Path
 
 RATE = 22050
-CHORD_SECONDS = 8.0
+CHORD_SECONDS = 11.0
 OUT = Path(__file__).resolve().parent.parent / "assets" / "audio" / "music.wav"
 
-# D major, slow and open: Dmaj9 - Bm9 - Gmaj7 - Asus2 (MIDI note numbers).
+# D major, low and warm, close voicings: Dmaj7 - Bm7 - Gmaj7 - Asus2.
 CHORDS = [
-    [62, 66, 69, 73, 76],
-    [59, 62, 66, 69, 73],
-    [55, 59, 62, 66, 69],
-    [57, 59, 64, 69, 71],
+    [50, 54, 57, 61],
+    [47, 50, 54, 57],
+    [43, 47, 50, 54],
+    [45, 47, 52, 57],
 ]
 ROOTS = [38, 35, 31, 33]
 BELL_NOTES = [74, 76, 78, 81, 83, 86]  # D pentatonic, upper octave
-PAD_ATTACK = 2.5
-PAD_RELEASE = 3.5
+PAD_ATTACK = 4.0
+PAD_RELEASE = 5.0
 BELL_DECAY = 1.6
 ECHO_SECONDS = 0.42
 ECHO_FEEDBACK = 0.38
@@ -69,35 +71,21 @@ def main():
                 continue
             value = 0.0
             for f, amp in voices:
-                # Two slightly detuned sines make the pad breathe.
-                value += amp * (math.sin(2 * math.pi * f * t) + 0.6 * math.sin(2 * math.pi * (f + 0.18) * t + 1.3))
-            add(start + i, value * env)
-
-    rng = random.Random("chain-escape-music-v1")
-    bell_time = 1.5
-    total = CHORD_SECONDS * len(CHORDS)
-    while bell_time < total:
-        note = rng.choice(BELL_NOTES)
-        f = freq(note)
-        start = int(bell_time * RATE)
-        for repeat in range(ECHO_REPEATS + 1):
-            gain = 0.09 * (ECHO_FEEDBACK ** repeat)
-            offset = start + int(repeat * ECHO_SECONDS * RATE)
-            for i in range(int(BELL_DECAY * 3 * RATE)):
-                t = i / RATE
-                env = min(1.0, t / 0.006) * math.exp(-t / BELL_DECAY)
-                value = math.sin(2 * math.pi * f * t) + 0.25 * math.sin(2 * math.pi * f * 2.76 * t) * math.exp(-t / 0.4)
-                add(offset + i, gain * env * value)
-        bell_time += rng.choice([2.75, 3.5, 4.25, 5.0])
+                # Two slightly detuned sines make the pad breathe softly.
+                value += amp * (math.sin(2 * math.pi * f * t) + 0.5 * math.sin(2 * math.pi * (f + 0.12) * t + 1.3))
+            # A very slow swell (one breath every ~8 s) keeps it alive.
+            breath = 0.85 + 0.15 * math.sin(2 * math.pi * t / 8.0)
+            add(start + i, value * env * breath)
 
     peak = max(abs(v) for v in out) or 1.0
     scale = 0.55 / peak
-    with wave.open(str(OUT), "wb") as file:
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else OUT
+    with wave.open(str(target), "wb") as file:
         file.setnchannels(1)
         file.setsampwidth(2)
         file.setframerate(RATE)
         file.writeframes(b"".join(struct.pack("<h", int(v * scale * 32767)) for v in out))
-    print("wrote", OUT, f"{length / RATE:.0f} s")
+    print("wrote", target, f"{length / RATE:.0f} s")
 
 
 if __name__ == "__main__":

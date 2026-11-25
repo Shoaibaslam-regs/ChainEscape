@@ -3,7 +3,7 @@ extends Node
 ## Plays sound effects and vibration, respecting the player's settings.
 ## Created once by Main and handed to the screens that need it.
 
-enum Sound { EXIT, BLOCKED, CHAIN_BREAK, UNLOCK, LEVEL_COMPLETE, BUTTON, LEVEL_START, PRAISE, LINK_JOIN }
+enum Sound { EXIT, BLOCKED, CHAIN_BREAK, UNLOCK, LEVEL_COMPLETE, BUTTON, LEVEL_START, PRAISE, LINK_JOIN, SPLASH_RISE, CHAIN_SLIDE, LOCK_SNAP, TITLE_CHIME }
 
 const STREAMS: Dictionary[Sound, AudioStream] = {
 	Sound.EXIT: preload("res://assets/audio/exit.wav"),
@@ -15,6 +15,10 @@ const STREAMS: Dictionary[Sound, AudioStream] = {
 	Sound.LEVEL_START: preload("res://assets/audio/level_start.wav"),
 	Sound.PRAISE: preload("res://assets/audio/praise.wav"),
 	Sound.LINK_JOIN: preload("res://assets/audio/link_join.wav"),
+	Sound.SPLASH_RISE: preload("res://assets/audio/splash_rise.wav"),
+	Sound.CHAIN_SLIDE: preload("res://assets/audio/chain_slide.wav"),
+	Sound.LOCK_SNAP: preload("res://assets/audio/lock_snap.wav"),
+	Sound.TITLE_CHIME: preload("res://assets/audio/title_chime.wav"),
 }
 ## Sounds that repeat quickly get a small random pitch change each time so a
 ## run of taps doesn't sound mechanical.
@@ -46,6 +50,8 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	for voice: AudioStreamPlayer in _voices:
 		voice.stop()
+		# Let go of the sound too, so nothing is still in use when the app closes.
+		voice.stream = null
 
 
 func apply_settings(settings: SettingsStore) -> void:

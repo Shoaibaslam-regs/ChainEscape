@@ -237,6 +237,14 @@ func play_exit(distance_cells: float, delay: float = 0.0) -> void:
 
 ## Short forward nudge plus a coral tint: "you can't go yet".
 ## Used both when the path is blocked and when the arrow is locked.
+## A finger is resting on the arrow: it dips slightly.
+func set_pressed(pressed: bool) -> void:
+	if is_exiting:
+		return
+	var tween := create_tween()
+	tween.tween_property(self, "scale", Vector2.ONE * (0.88 if pressed else 1.0), 0.08).set_trans(Tween.TRANS_SINE)
+
+
 func play_blocked() -> void:
 	if is_exiting:
 		return

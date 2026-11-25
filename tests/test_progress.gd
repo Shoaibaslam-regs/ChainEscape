@@ -165,3 +165,35 @@ func test_rank_titles_by_points() -> void:
 	check(is_equal_approx(Rank.progress(250), 0.5), "halfway from Keyholder to Locksmith")
 	check_eq(Rank.for_points(999999)["name"], "Grand Escape Artist", "top rank")
 	check_eq(Rank.progress(999999), 1.0, "full bar at the top")
+
+
+func test_hint_store_starter_free_hints_and_reset() -> void:
+	var path := temp_save_path("hints")
+	var store := HintStore.new(path)
+	store.load_hints()
+	check_eq(store.get_hints(), HintStore.STARTER_HINTS, "starter hints")
+	check(store.use_hint() and store.use_hint(), "use both")
+	check(not store.use_hint(), "cannot go below zero")
+	check(not store.on_level_cleared(4), "no free hint on level 4")
+	check(store.on_level_cleared(5), "a free hint every 5 levels")
+	check(not store.on_level_cleared(5), "replaying level 5 gives nothing more")
+	check_eq(store.levels_until_free_hint(7), 3, "3 levels to the next free hint")
+	var reloaded := HintStore.new(path)
+	reloaded.load_hints()
+	check_eq(reloaded.get_hints(), 1, "saved and restored")
+	check(not reloaded.on_level_cleared(5), "and remembers level 5 already paid out")
+	reloaded.reset()
+	check_eq(reloaded.get_hints(), HintStore.STARTER_HINTS, "reset gives the starter hints back")
+	remove_file(path)
+
+
+func test_hint_finder_picks_the_most_useful_free_arrow() -> void:
+	# (0,0) UP is free but frees nobody; (2,2) DOWN is free and is the key
+	# that (1,1) waits for; (0,2) RIGHT is blocked by (2,2)... so (2,2) frees two.
+	var board := BoardState.new(Vector2i(3, 3))
+	board.add_arrow(Vector2i(0, 0), Arrow.Direction.UP)
+	var key := board.add_arrow(Vector2i(2, 2), Arrow.Direction.DOWN)
+	var lock := board.add_arrow(Vector2i(1, 1), Arrow.Direction.UP)
+	board.add_dependency(lock, key)
+	board.add_arrow(Vector2i(0, 2), Arrow.Direction.RIGHT)
+	check_eq(HintFinder.best_arrow(board), key, "the arrow that frees the most")

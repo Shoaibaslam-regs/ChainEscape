@@ -5,10 +5,11 @@
 [resource]
 script = ExtResource("1_hp1t2")
 title = "Tangled"
+tip = "Chains block the way. Free a chain's key arrow to break it."
 layout = "^ > . v ^
 < . ^ . >
 . v < > .
 > . v . ^
 . < . v .
 v . > . v"
-dependencies = Array[Vector4i]([Vector4i(0, 0, 1, 0), Vector4i(4, 0, 4, 1), Vector4i(0, 5, 1, 4), Vector4i(2, 5, 3, 4), Vector4i(2, 2, 2, 1), Vector4i(2, 1, 3, 2)])
+dependencies = Array[Vector4i]([Vector4i(0, 0, 1, 0), Vector4i(4, 0, 4, 1), Vector4i(0, 5, 1, 4), Vector4i(2, 5, 3, 4), Vector4i(2, 2, 2, 1), Vector4i(2, 1, 3, 2), Vector4i(4, 1, 3, 4)])

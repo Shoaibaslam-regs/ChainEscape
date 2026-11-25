@@ -115,6 +115,7 @@ func build_board(errors: PackedStringArray = PackedStringArray()) -> BoardState:
 		elif not board.add_dependency(dependent.id, required.id):
 			errors.append("%s: dependency %s is a duplicate, self-link or cycle" % [_describe(), link])
 
+	board.chains_block = not has_twist(TWIST_HIDDEN_LINKS)
 	if master_cell != NO_CELL:
 		var master := board.get_arrow_at(master_cell)
 		if master == null:

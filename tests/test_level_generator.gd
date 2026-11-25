@@ -78,15 +78,18 @@ func test_generated_dependencies_are_short_and_meaningful() -> void:
 	for level_number: int in range(start, start + CHECKED_LEVEL_COUNT):
 		var level := sequence.get_level(level_number)
 		var board := level.build_board()
-		var max_keys := 2 if level.has_twist(LevelData.TWIST_DOUBLE_LOCKS) or level.master_cell != LevelData.NO_CELL else 1
+		var hardness := sequence.hardness_for(level_number)
+		var max_keys := 2 if level.has_twist(LevelData.TWIST_DOUBLE_LOCKS) or level.master_cell != LevelData.NO_CELL or hardness >= LevelGenerator.DOUBLE_KEYS_FROM_HARDNESS else 1
+		var reach := LevelGenerator.chain_reach(hardness)
 		var key_counts: Dictionary[Vector2i, int] = {}
 		for link: Vector4i in level.dependencies:
 			var waiting := Vector2i(link.x, link.y)
 			var required := Vector2i(link.z, link.w)
 			var offset := required - waiting
-			check(maxi(absi(offset.x), absi(offset.y)) == 1, "level %d: dependency %s links neighbours" % [level_number, link])
+			var allowed := maxi(reach, LevelGenerator.MASTER_KEY_REACH) if waiting == level.master_cell else reach
+			check(maxi(absi(offset.x), absi(offset.y)) <= allowed, "level %d: dependency %s within reach %d" % [level_number, link, allowed])
 			var waiting_arrow := board.get_arrow_at(waiting)
-			check(Arrow.direction_to_vector(waiting_arrow.direction) != offset, "level %d: dependency %s isn't already a path block" % [level_number, link])
+			check(not board.get_exit_path(waiting_arrow.id).has(required), "level %d: dependency %s isn't already a path block" % [level_number, link])
 			key_counts[waiting] = key_counts.get(waiting, 0) + 1
 			check(key_counts[waiting] <= max_keys, "level %d: arrow %s waits for at most %d arrows" % [level_number, waiting, max_keys])
 		total_dependencies += level.dependencies.size()
@@ -335,3 +338,35 @@ func _average_challenge_stats(sequence: LevelSequence, first: int, count: int) -
 		var level := sequence.get_level(sequence.challenge_level(index))
 		total += Vector2(BoardSolver.count_solution_rounds(level.build_board()), level.dependencies.size())
 	return total / count
+
+
+func test_chains_reach_across_the_board() -> void:
+	check_eq(LevelGenerator.chain_reach(0.0), 1, "gentle levels link neighbours only")
+	check_eq(LevelGenerator.chain_reach(1.0), LevelGenerator.MAX_CHAIN_REACH, "hard levels reach far")
+	var sequence := _get_sequence()
+	var far_links := 0
+	var links := 0
+	var biggest := Vector2i.ZERO
+	for level_number: int in range(400, 406):
+		var level := sequence.get_level(level_number)
+		var board := level.build_board()
+		check(board != null and BoardSolver.is_solvable(level.build_board()), "level %d solvable" % level_number)
+		biggest = Vector2i(maxi(biggest.x, board.size.x), maxi(biggest.y, board.size.y))
+		for link: Vector4i in level.dependencies:
+			links += 1
+			if maxi(absi(link.x - link.z), absi(link.y - link.w)) >= 2:
+				far_links += 1
+	print("  late levels: %d chains, %d reach 2+ cells, boards up to %s" % [links, far_links, biggest])
+	for level_number: int in range(400, 406):
+		var level := sequence.get_level(level_number)
+		var board := level.build_board()
+		var arrows: Dictionary = {}
+		for arrow: Arrow in board.get_arrows():
+			arrows[arrow.cell] = true
+		for index: int in level.dependencies.size():
+			var link := level.dependencies[index]
+			var others: Array[Vector4i] = level.dependencies.duplicate()
+			others.remove_at(index)
+			check(LevelGenerator.is_clear_link(Vector2i(link.x, link.y), Vector2i(link.z, link.w), arrows, others), "level %d: chain %s is clear (not over arrows, few crossings)" % [level_number, link])
+	check(far_links * 4 >= links, "at least a quarter of late chains reach 2+ cells (%d of %d)" % [far_links, links])
+	check(biggest.y >= 14, "late boards reach 14-15 rows (%d)" % biggest.y)

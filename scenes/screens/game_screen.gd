@@ -31,6 +31,10 @@ const COMPLETE_VIBRATION_MS := 45
 @onready var _message: Label = %Message
 @onready var _pause_button: Button = %PauseButton
 @onready var _restart_button: Button = %RestartButton
+@onready var _hint_button: Button = %HintButton
+@onready var _hint_count: Label = %HintCount
+var _hints: HintStore
+var _hint_glow := HintGlow.new()
 @onready var _pause_panel: PausePanel = %PausePanel
 @onready var _complete_panel: CompletePanel = %CompletePanel
 @onready var _tip_label: Label = %TipLabel
@@ -72,6 +76,8 @@ var _after_achievements: Callable
 func _ready() -> void:
 	_pause_button.pressed.connect(pause)
 	_restart_button.pressed.connect(restart)
+	_hint_button.pressed.connect(use_hint)
+	_hint_count.add_theme_stylebox_override("normal", _badge_style())
 	_board_view.arrow_exited.connect(_on_arrow_exited)
 	_board_view.arrow_blocked.connect(_on_wrong_tap.unbind(2))
 	_board_view.arrow_locked.connect(_on_locked_tap.unbind(2))
@@ -148,6 +154,7 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 	_level_title.text = title
 	_hand.hide_hand()
 	_hand_request += 1
+	_hint_glow.stop()
 	_guided_left = 0
 	_tip_label.hide()
 	if level == null:
@@ -168,9 +175,14 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 	_overline.text = _overline_for(level)
 	_restart_button.disabled = false
 	_pause_button.disabled = false
+	_hint_button.disabled = false
+	_update_hint_button()
 	_board_view.hide_links = level.has_twist(LevelData.TWIST_HIDDEN_LINKS)
 	_board_view.set_board(board)
-	# New arrow views were just added; keep the hand drawn above them.
+	# New arrow views were just added; keep the hint glow and hand above them.
+	if _hint_glow.get_parent() == null:
+		_board_view.add_child(_hint_glow)
+	_board_view.move_child(_hint_glow, -1)
 	_board_view.move_child(_hand, -1)
 	var has_locks := _count_locked(board) > 0
 	_locks_group.visible = has_locks
@@ -388,7 +400,82 @@ func get_status_text() -> String:
 
 ## Quick releases build a streak: each one plays the release note a step
 ## higher, and milestones show a praise word with a sparkle.
+## The player's hints (numbered levels only; Daily and Weekly stay pure).
+func set_hint_store(store: HintStore) -> void:
+	if _hints != null and _hints.changed.is_connected(_on_hints_changed):
+		_hints.changed.disconnect(_on_hints_changed)
+	_hints = store
+	if _hints != null:
+		_hints.changed.connect(_on_hints_changed)
+	_update_hint_button()
+
+
+func _on_hints_changed(_count: int) -> void:
+	_update_hint_button()
+
+
+func _exit_tree() -> void:
+	# The store outlives this screen: stop listening to it.
+	if _hints != null and _hints.changed.is_connected(_on_hints_changed):
+		_hints.changed.disconnect(_on_hints_changed)
+
+
+func get_hint_count_text() -> String:
+	return _hint_count.text
+
+
+## Shows one playable arrow with a pulsing glow, using one hint. With none
+## left, says when the next free hint arrives instead.
+func use_hint() -> void:
+	if _state != State.PLAYING or _hints == null or is_daily():
+		return
+	var board := _board_view.get_board()
+	if board == null:
+		return
+	if _hints.get_hints() <= 0:
+		var highest := _progress.get_highest_completed_level() if _progress != null else 0
+		var wait := _hints.levels_until_free_hint(highest)
+		_praise_popup.show_praise("No hints left · free one in %d %s" % [wait, "level" if wait == 1 else "levels"] if wait > 0 else "No hints left")
+		_play_sound(Feedback.Sound.BLOCKED, 0.85)
+		return
+	var id := HintFinder.best_arrow(board)
+	if id == -1:
+		return
+	_hints.use_hint()
+	_hint_glow.show_at(_board_view.cell_to_local(board.get_arrow(id).cell), _board_view.get_cell_size(), id)
+	_play_sound(Feedback.Sound.UNLOCK)
+	_update_hint_button()
+
+
+## The arrow the hint glow is showing, or -1.
+func get_hint_target() -> int:
+	return _hint_glow.get_target_id()
+
+
+func get_hint_button() -> Button:
+	return _hint_button
+
+
+func _update_hint_button() -> void:
+	if _hint_button == null:
+		return
+	var available := _hints != null and not is_daily()
+	_hint_button.visible = available
+	if available:
+		_hint_count.text = str(_hints.get_hints())
+		_hint_count.modulate.a = 1.0 if _hints.get_hints() > 0 else 0.6
+
+
+static func _badge_style() -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = Palette.GOLD
+	box.set_corner_radius_all(20)
+	box.anti_aliasing = true
+	return box
+
+
 func _on_arrow_exited(arrow: Arrow) -> void:
+	_hint_glow.stop()
 	if _guided_left > 0:
 		_guided_left -= 1
 		_schedule_hand()
@@ -463,7 +550,8 @@ func _on_ad_finished(rewarded: bool) -> void:
 ## into a dim outline.
 func _update_moves() -> void:
 	_pips.visible = _move_budget.enabled
-	_moves_divider.visible = _move_budget.enabled
+	# Only a spacer now (pushes moves and the hint to the right): always on.
+	_moves_divider.visible = true
 	var remaining := _move_budget.remaining()
 	for index: int in _pips.get_child_count():
 		var key := _pips.get_child(index) as TextureRect
@@ -500,11 +588,15 @@ func _on_board_cleared() -> void:
 	elif _progress != null:
 		_progress.record_level_completed(_level_number)
 		_progress.record_stars(_level_number, ProgressStore.stars_for(_wrong_taps))
+		if _hints != null:
+			_hints.on_level_cleared(_level_number)
 	var was_challenge := _current_level != null and _current_level.is_challenge and not is_daily()
 	if _achievements != null:
 		_pending_unlocks = _achievements.record_level_cleared(_chains_broken, _wrong_taps, was_challenge, _master_released)
 	_pause_button.disabled = true
 	_restart_button.disabled = true
+	_hint_button.disabled = true
+	_hint_glow.stop()
 	var level_number := _level_number
 	var challenge := _challenge
 	await get_tree().create_timer(COMPLETE_DELAY_SECONDS).timeout
@@ -595,6 +687,7 @@ func _show_error(message: String) -> void:
 	_moves_divider.hide()
 	_arrows_label.text = ""
 	_restart_button.disabled = true
+	_hint_button.disabled = true
 	_pause_button.disabled = true
 
 

@@ -104,3 +104,15 @@ func test_walls_and_master_in_layout() -> void:
 	broken.master_cell = Vector2i(1, 0)
 	var errors := PackedStringArray()
 	check(broken.build_board(errors) == null and not errors.is_empty(), "master on an empty cell is an error")
+
+
+func test_level_6_teaches_chains_block() -> void:
+	var level: LevelData = load("res://levels/level_06.tres")
+	var board := level.build_board()
+	var shown := false
+	for arrow: Arrow in board.get_arrows():
+		if not board.is_locked(arrow.id) and board.find_blocker(arrow.id) == null and board.find_blocking_chain(arrow.id) != null:
+			shown = true
+	check(shown, "level 6 starts with a chain lying across a free arrow's path")
+	check(level.tip.contains("Chains block"), "and its tip explains the rule")
+	check(BoardSolver.is_solvable(level.build_board()), "still solvable")

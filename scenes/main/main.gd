@@ -18,6 +18,7 @@ extends Control
 @export var achievements_path: String = AchievementTracker.DEFAULT_PATH
 @export var daily_path: String = DailyStore.DEFAULT_PATH
 @export var weekly_path: String = WeeklyStore.DEFAULT_PATH
+@export var hints_path: String = HintStore.DEFAULT_PATH
 @export var weekly_screen_scene: PackedScene
 ## Pins "today" for tests (e.g. "2026-11-24"); empty means the device date.
 @export var daily_date_override: String = ""
@@ -39,6 +40,7 @@ var _achievements: AchievementTracker
 var _feedback: Feedback
 var _daily: DailyStore
 var _weekly: WeeklyStore
+var _hints: HintStore
 var _ads: RewardedAds
 
 
@@ -52,6 +54,8 @@ func _ready() -> void:
 	_achievements.load_achievements()
 	_weekly = WeeklyStore.new(weekly_path)
 	_weekly.load_results()
+	_hints = HintStore.new(hints_path)
+	_hints.load_hints()
 	_daily = DailyStore.new(daily_path)
 	_daily.load_results()
 	_feedback = Feedback.new()
@@ -66,6 +70,9 @@ func _ready() -> void:
 		push_error("Main: level_catalog is not assigned.")
 		level_catalog = LevelCatalog.new()
 	_levels = LevelSequence.new(level_catalog)
+	# Start preparing the next level now, so it is ready by the time the
+	# splash ends and Play is pressed.
+	_levels.prefetch(_progress.get_next_level_number())
 	if splash_screen_scene != null:
 		show_splash()
 	else:
@@ -149,6 +156,10 @@ func show_weekly_game(index: int) -> void:
 	screen.play_challenge(WeeklyMode.new(week, index, _weekly), WeeklyChallenge.level_for(week, index))
 
 
+func get_hints() -> HintStore:
+	return _hints
+
+
 func get_weekly() -> WeeklyStore:
 	return _weekly
 
@@ -200,6 +211,7 @@ func show_game() -> void:
 	screen.settings_requested.connect(open_settings)
 	screen.setup(_levels, _progress, _achievements, _feedback, _settings.reduced_motion, _ads)
 	screen.set_arrow_theme(get_arrow_theme())
+	screen.set_hint_store(_hints)
 	screen.play_level(_progress.get_next_level_number())
 
 
@@ -290,6 +302,7 @@ func _on_reset_confirmed() -> void:
 	_achievements.reset()
 	_daily.reset()
 	_weekly.reset()
+	_hints.reset()
 	_settings_panel.close()
 	show_home()
 
@@ -299,6 +312,9 @@ func _show_screen(screen_scene: PackedScene, fade_in: bool = true) -> Node:
 		push_error("Main: screen scene is not assigned.")
 		return null
 	if _current_screen != null:
+		# Stop it right away (e.g. the splash's sound cues), not at frame end.
+		if _current_screen.has_method("dismiss"):
+			_current_screen.dismiss()
 		_current_screen.queue_free()
 	_current_screen = screen_scene.instantiate()
 	_screen_container.add_child(_current_screen)

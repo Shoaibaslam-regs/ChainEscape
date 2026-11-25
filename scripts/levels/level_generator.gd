@@ -42,11 +42,20 @@ const MAX_ROWS := 10
 ## 0..1): denser boards with many more, smaller arrows. 10 x 13 keeps cells
 ## big enough to tap reliably on a phone.
 const EXTRA_COLUMNS := 2
-const EXTRA_ROWS := 3
+const EXTRA_ROWS := 5
 const MIN_FILL_RATIO := 0.55
 const MAX_FILL_RATIO := 0.75
 const MIN_DEPENDENCY_CHANCE := 0.12
-const MAX_DEPENDENCY_CHANCE := 0.3
+const MAX_DEPENDENCY_CHANCE := 0.38
+## How far a chain may reach (in cells, any direction): 1 = neighbours only,
+## growing with hardness to MAX_CHAIN_REACH. Far links are preferred more
+## as levels get harder, so chains cross the board instead of only joining
+## next-door arrows.
+const MAX_CHAIN_REACH := 4
+const FAR_LINK_PREFERENCE := 0.3
+const HARDNESS_FAR_LINK_PREFERENCE := 0.35
+## From this hardness, any arrow may wait for two keys.
+const DOUBLE_KEYS_FROM_HARDNESS := 0.5
 const MIN_TARGET_ROUNDS := 5.0
 const MAX_TARGET_ROUNDS := 10.0
 ## Share of arrows that may be free at the start before a candidate is penalised.
@@ -101,6 +110,8 @@ const MIN_FREE_ARROWS := 3
 ## Master arrow: it should become free between these fractions of the solve.
 const MASTER_ROUND_MIN := 0.4
 const MASTER_ROUND_MAX := 0.75
+## How far the master's two keys may be.
+const MASTER_KEY_REACH := 3
 
 
 ## Builds the level for [param level_number]. [param difficulty] runs from
@@ -126,6 +137,8 @@ static func generate_from_seed(seed_text: String, difficulty: float, twists: Pac
 	var candidate_count := CANDIDATE_COUNT + roundi(CANDIDATE_COUNT * HARDNESS_EXTRA_CANDIDATES * hardness)
 	for attempt: int in candidate_count:
 		var candidate := _build_candidate(difficulty, rng, twists, hardness, size)
+		remove_unclear_links(candidate)
+		repair_chain_blocks(candidate)
 		var board := candidate.build_board()
 		if board == null:
 			push_error("LevelGenerator: %s candidate %d produced invalid data." % [seed_text, attempt])
@@ -142,10 +155,12 @@ static func generate_from_seed(seed_text: String, difficulty: float, twists: Pac
 			best_level = candidate
 	if best_level != null:
 		best_level.twists = twists
-		if hardness > 0.0:
-			tighten(best_level, hardness, rng)
+		# The master comes first: tightening only chains arrows that are free
+		# at the start, so it never touches the master's own keys.
 		if with_master and not _add_master(best_level):
 			push_warning("LevelGenerator: %s has no suitable master arrow." % seed_text)
+		if hardness > 0.0:
+			tighten(best_level, hardness, rng)
 	return best_level
 
 
@@ -153,11 +168,14 @@ static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twis
 	var max_columns := MAX_COLUMNS + roundi(EXTRA_COLUMNS * clampf(size, 0.0, 1.0))
 	var max_rows := MAX_ROWS + roundi(EXTRA_ROWS * clampf(size, 0.0, 1.0))
 	var columns := clampi(roundi(lerpf(MIN_COLUMNS, max_columns, difficulty)) - rng.randi_range(0, 1), MIN_COLUMNS, max_columns)
-	var rows := mini(columns + rng.randi_range(1, 3 if size > 0.0 else 2), max_rows)
+	var extra_rows := 2 if size <= 0.0 else (3 if size < 0.5 else 5)
+	var rows := mini(columns + rng.randi_range(1, extra_rows), max_rows)
 	var board_size := Vector2i(columns, rows)
 	var target_arrow_count := roundi(columns * rows * lerpf(MIN_FILL_RATIO, MAX_FILL_RATIO, difficulty))
 	var dependency_chance := lerpf(MIN_DEPENDENCY_CHANCE, MAX_DEPENDENCY_CHANCE, difficulty) + HARDNESS_EXTRA_DEPENDENCY_CHANCE * hardness
-	var max_keys_per_arrow := 1
+	var max_keys_per_arrow := 2 if hardness >= DOUBLE_KEYS_FROM_HARDNESS else 1
+	var reach := chain_reach(hardness)
+	var far_preference := FAR_LINK_PREFERENCE + HARDNESS_FAR_LINK_PREFERENCE * hardness
 	var prefer_chain_ends := twists.has(LevelData.TWIST_LONG_CHAINS)
 	if twists.has(LevelData.TWIST_DOUBLE_LOCKS):
 		dependency_chance += DOUBLE_LOCK_EXTRA_CHANCE
@@ -207,7 +225,7 @@ static func _build_candidate(difficulty: float, rng: RandomNumberGenerator, twis
 		if options.is_empty():
 			continue
 		if rng.randf() < dependency_chance:
-			var waiting_cell := _pick_waiting_neighbour(cell, placed, waiting_counts, max_keys_per_arrow, key_cells if prefer_chain_ends else {}, rng)
+			var waiting_cell := _pick_waiting_neighbour(cell, placed, waiting_counts, max_keys_per_arrow, key_cells if prefer_chain_ends else {}, rng, reach, far_preference, board_size, tiles)
 			if waiting_cell != cell:
 				dependencies.append(Vector4i(waiting_cell.x, waiting_cell.y, cell.x, cell.y))
 				waiting_counts[waiting_cell] = waiting_counts.get(waiting_cell, 0) + 1
@@ -289,6 +307,7 @@ static func tighten(level: LevelData, hardness: float, rng: RandomNumberGenerato
 	for arrow: Arrow in board.get_arrows():
 		cells_by_id[arrow.id] = arrow.cell
 		ids_by_cell[arrow.cell] = arrow.id
+	var reach := chain_reach(hardness)
 	var target_free := maxi(MIN_FREE_ARROWS, roundi(board.arrow_count() * lerpf(TIGHT_FREE_RATIO_EASY, TIGHT_FREE_RATIO_HARD, hardness)))
 	var rounds := BoardSolver.exit_rounds(level.build_board())
 	if rounds.has(-1):
@@ -310,13 +329,23 @@ static func tighten(level: LevelData, hardness: float, rng: RandomNumberGenerato
 		if rounds.get(id, 0) != 1:
 			continue
 		var cell := cells_by_id[id]
-		# Neighbours that leave later, latest first.
+		# Arrows within reach that leave later: latest first, then farthest.
 		var options: Array[int] = []
-		for offset: Vector2i in NEIGHBOUR_OFFSETS:
+		for offset: Vector2i in offsets_within(reach):
 			var other: int = ids_by_cell.get(cell + offset, -1)
-			if other != -1 and rounds.get(other, 0) >= 2 and not board.get_exit_path(other).has(cell):
+			if other != -1 and rounds.get(other, 0) >= 2 and not board.get_exit_path(other).has(cell) \
+					and is_clear_link(cell, cells_by_id[other], ids_by_cell, level.dependencies):
 				options.append(other)
-		options.sort_custom(func(a: int, b: int) -> bool: return rounds[a] > rounds[b])
+		options.sort_custom(func(a: int, b: int) -> bool:
+			if rounds[a] != rounds[b]:
+				return rounds[a] > rounds[b]
+			return _cell_distance(cells_by_id[a], cell) > _cell_distance(cells_by_id[b], cell))
+		# Same near/far mix as during building.
+		if reach > 1:
+			var want_far := rng.randf() < FAR_LINK_PREFERENCE + HARDNESS_FAR_LINK_PREFERENCE * hardness
+			var kind := options.filter(func(o: int) -> bool: return (_cell_distance(cells_by_id[o], cell) >= 2) == want_far)
+			if not kind.is_empty():
+				options.assign(kind)
 		for other: int in options.slice(0, 3):
 			var key_cell := cells_by_id[other]
 			var link := Vector4i(cell.x, cell.y, key_cell.x, key_cell.y)
@@ -346,13 +375,16 @@ static func _count_free_arrows(board: BoardState) -> int:
 ## already runs through [param cell] (a dependency there would add nothing).
 ## Neighbours in [param preferred] (existing keys) are chosen first, which
 ## extends chains.
-static func _pick_waiting_neighbour(cell: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], waiting_counts: Dictionary[Vector2i, int], max_keys: int, preferred: Dictionary, rng: RandomNumberGenerator) -> Vector2i:
+static func _pick_waiting_neighbour(cell: Vector2i, placed: Dictionary[Vector2i, Arrow.Direction], waiting_counts: Dictionary[Vector2i, int], max_keys: int, preferred: Dictionary, rng: RandomNumberGenerator, reach: int = 1, far_preference: float = 0.0, board_size: Vector2i = Vector2i.ZERO, tiles: Dictionary = {}) -> Vector2i:
 	var candidates: Array[Vector2i] = []
-	for offset: Vector2i in NEIGHBOUR_OFFSETS:
+	for offset: Vector2i in offsets_within(reach):
 		var neighbour := cell + offset
 		if not placed.has(neighbour) or waiting_counts.get(neighbour, 0) >= max_keys:
 			continue
-		if Arrow.direction_to_vector(placed[neighbour]) == -offset:
+		if _points_at(neighbour, placed[neighbour], cell):
+			continue
+		# With mirrors or black holes the real path bends: check that too.
+		if not tiles.is_empty() and _exit_path(neighbour, placed[neighbour], board_size, tiles).has(cell):
 			continue
 		candidates.append(neighbour)
 	if candidates.is_empty():
@@ -361,7 +393,113 @@ static func _pick_waiting_neighbour(cell: Vector2i, placed: Dictionary[Vector2i,
 		var chain_ends := candidates.filter(func(c: Vector2i) -> bool: return preferred.has(c))
 		if not chain_ends.is_empty():
 			candidates.assign(chain_ends)
+	# Far cells outnumber near ones, so pick the kind first: far with
+	# [param far_preference], otherwise a neighbour (when there is one).
+	if reach > 1:
+		var want_far := rng.randf() < far_preference
+		var kind := candidates.filter(func(c: Vector2i) -> bool: return (_cell_distance(c, cell) >= 2) == want_far)
+		if not kind.is_empty():
+			candidates.assign(kind)
 	return candidates[rng.randi_range(0, candidates.size() - 1)]
+
+
+## A chain must read clearly: it may not pass over another arrow, and
+## chains never cross each other (MAX_LINK_CROSSINGS).
+const MAX_LINK_CROSSINGS := 0
+## A chain passing closer than this (in cells) to an arrow's centre covers it.
+const LINK_CLEARANCE := 0.42
+
+
+static func is_clear_link(a: Vector2i, b: Vector2i, arrows: Dictionary, links: Array[Vector4i]) -> bool:
+	var start := Vector2(a)
+	var end := Vector2(b)
+	for cell: Vector2i in arrows:
+		if cell == a or cell == b:
+			continue
+		if Geometry2D.get_closest_point_to_segment(Vector2(cell), start, end).distance_to(Vector2(cell)) < LINK_CLEARANCE:
+			return false
+	var crossings := 0
+	for link: Vector4i in links:
+		var c := Vector2i(link.x, link.y)
+		var d := Vector2i(link.z, link.w)
+		if c == a or c == b or d == a or d == b:
+			continue
+		if Geometry2D.segment_intersects_segment(start, end, Vector2(c), Vector2(d)) != null:
+			crossings += 1
+			if crossings > MAX_LINK_CROSSINGS:
+				return false
+	return true
+
+
+## Chains block flight paths, so a level built for arrows alone can end up
+## sealed by a chain. While the level is stuck, drop the chain lying across a
+## stuck arrow's path (dropping a chain only ever frees arrows). Returns
+## whether the level is solvable afterwards.
+static func repair_chain_blocks(level: LevelData) -> bool:
+	for attempt: int in 64:
+		var board := level.build_board()
+		if board == null:
+			return false
+		var rounds := BoardSolver.exit_rounds(board)
+		if not rounds.has(-1):
+			return true
+		# The board is left at the stuck point: find a chain blocking someone.
+		var removed := false
+		for arrow: Arrow in board.get_arrows():
+			if board.is_locked(arrow.id) or board.find_blocker(arrow.id) != null or board.is_walled_in(arrow.id):
+				continue
+			var link := board.find_blocking_link(arrow.id)
+			if link != BoardState.NO_LINK and level.dependencies.has(link):
+				level.dependencies.erase(link)
+				removed = true
+				break
+		if not removed:
+			return false
+	return false
+
+
+## Drops chains that would be hard to read (over an arrow, or crossing too
+## many chains). Removing a chain never makes a level unsolvable.
+static func remove_unclear_links(level: LevelData) -> void:
+	var board := level.build_board()
+	if board == null:
+		return
+	var arrows: Dictionary = {}
+	for arrow: Arrow in board.get_arrows():
+		arrows[arrow.cell] = true
+	var kept: Array[Vector4i] = []
+	for link: Vector4i in level.dependencies:
+		if is_clear_link(Vector2i(link.x, link.y), Vector2i(link.z, link.w), arrows, kept):
+			kept.append(link)
+	level.dependencies = kept
+
+
+## Chain reach for a hardness (see MAX_CHAIN_REACH).
+static func chain_reach(hardness: float) -> int:
+	return clampi(1 + roundi((MAX_CHAIN_REACH - 1) * hardness), 1, MAX_CHAIN_REACH)
+
+
+## Every offset within [param reach] cells (Chebyshev distance), nearest first.
+static func offsets_within(reach: int) -> Array[Vector2i]:
+	var offsets: Array[Vector2i] = []
+	for dy: int in range(-reach, reach + 1):
+		for dx: int in range(-reach, reach + 1):
+			if dx != 0 or dy != 0:
+				offsets.append(Vector2i(dx, dy))
+	offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return maxi(absi(a.x), absi(a.y)) < maxi(absi(b.x), absi(b.y)))
+	return offsets
+
+
+static func _cell_distance(a: Vector2i, b: Vector2i) -> int:
+	return maxi(absi(a.x - b.x), absi(a.y - b.y))
+
+
+## True if an arrow at [param from] facing [param direction] has [param target]
+## straight ahead (a dependency there would add nothing: it already blocks).
+static func _points_at(from: Vector2i, direction: Arrow.Direction, target: Vector2i) -> bool:
+	var step := Arrow.direction_to_vector(direction)
+	var delta := target - from
+	return step.x * delta.y - step.y * delta.x == 0 and step.x * delta.x + step.y * delta.y > 0
 
 
 ## All cells in a random order, using [param rng] (Array.shuffle would use the
@@ -498,18 +636,29 @@ static func _add_master(level: LevelData) -> bool:
 			candidates.append(cell)
 	candidates.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return Vector2(a).distance_to(center) < Vector2(b).distance_to(center))
 	var directions := _directions_by_cell(level)
+	# The master gets its own two keys, so skip arrows that already wait.
+	var already_waiting: Dictionary[Vector2i, bool] = {}
+	for link: Vector4i in level.dependencies:
+		already_waiting[Vector2i(link.x, link.y)] = true
 	for cell: Vector2i in candidates:
+		if already_waiting.has(cell):
+			continue
 		var keys: Array[Vector2i] = []
-		for offset: Vector2i in NEIGHBOUR_OFFSETS:
+		# Nearest keys first, up to MASTER_KEY_REACH cells away.
+		for offset: Vector2i in offsets_within(MASTER_KEY_REACH):
 			var neighbour := cell + offset
-			# A key directly in the master's path already blocks it: skip it.
-			if Arrow.direction_to_vector(directions[cell]) == offset:
+			# A key already in the master's path blocks it anyway: skip it.
+			if _points_at(cell, directions[cell], neighbour):
 				continue
-			if round_by_cell.has(neighbour) and round_by_cell[neighbour] < round_by_cell[cell]:
+			if round_by_cell.has(neighbour) and round_by_cell[neighbour] < round_by_cell[cell] \
+					and is_clear_link(cell, neighbour, round_by_cell, level.dependencies):
 				keys.append(neighbour)
 		if keys.size() < 2:
 			continue
-		keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return round_by_cell[a] > round_by_cell[b])
+		keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+			if _cell_distance(a, cell) != _cell_distance(b, cell):
+				return _cell_distance(a, cell) < _cell_distance(b, cell)
+			return round_by_cell[a] > round_by_cell[b])
 		var trial := level.duplicate() as LevelData
 		trial.dependencies = level.dependencies.duplicate()
 		for key: Vector2i in keys.slice(0, 2):

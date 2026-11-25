@@ -284,3 +284,29 @@ func test_endless_loop_counts_as_stuck() -> void:
 	var id := board.add_arrow(Vector2i(1, 0), Arrow.Direction.RIGHT)
 	check(board.is_walled_in(id), "an arrow that can never reach the edge is stuck")
 	check(not board.can_exit(id), "and cannot exit")
+
+
+func test_chain_blocks_flight_until_its_key_leaves() -> void:
+	# Lock (0,0) waits for key (2,2): the chain runs diagonally across (1,1).
+	var board := BoardState.new(Vector2i(3, 3))
+	var lock := board.add_arrow(Vector2i(0, 0), Arrow.Direction.UP)
+	var key := board.add_arrow(Vector2i(2, 2), Arrow.Direction.DOWN)
+	board.add_dependency(lock, key)
+	# This arrow flies right through (1,1), across the chain.
+	var runner := board.add_arrow(Vector2i(0, 1), Arrow.Direction.RIGHT)
+	check_eq(board.find_blocking_chain(runner), board.get_arrow(key), "the chain blocks it; its key is the one to free")
+	check(not board.can_exit(runner), "cannot fly through a chain")
+	check(board.can_exit(key), "the key arrow itself is not blocked by its own chain")
+	board.try_exit(key)
+	check(board.find_blocking_chain(runner) == null and board.can_exit(runner), "chain broken: the way is open")
+	check(board.can_exit(lock), "and the lock is open too")
+
+
+func test_hidden_chains_do_not_block() -> void:
+	var board := BoardState.new(Vector2i(3, 3))
+	var lock := board.add_arrow(Vector2i(0, 0), Arrow.Direction.UP)
+	var key := board.add_arrow(Vector2i(2, 2), Arrow.Direction.DOWN)
+	board.add_dependency(lock, key)
+	var runner := board.add_arrow(Vector2i(0, 1), Arrow.Direction.RIGHT)
+	board.chains_block = false
+	check(board.can_exit(runner), "invisible chains (hidden links) never block")

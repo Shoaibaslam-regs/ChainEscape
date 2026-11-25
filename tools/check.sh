@@ -24,6 +24,6 @@ run_step() {
 
 run_step "Importing project" --import
 run_step "Running tests" --script res://tests/run_tests.gd
-run_step "Booting main scene for 30 frames" --quit-after 30
+run_step "Booting main scene for 30 frames, then closing" --script res://tests/boot_check.gd
 
 echo "All checks passed."

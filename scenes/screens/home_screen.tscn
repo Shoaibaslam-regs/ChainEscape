@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" path="res://scenes/screens/home_screen.gd" id="1_script"]
 [ext_resource type="PackedScene" path="res://scenes/ui/screen_background.tscn" id="2_background"]
-[ext_resource type="Texture2D" path="res://assets/brand/home_hero.svg" id="3_logo"]
+[ext_resource type="Texture2D" path="res://assets/brand/home_art.svg" id="3_logo"]
 [ext_resource type="Script" path="res://scenes/ui/metal_label.gd" id="4_metal"]
 [ext_resource type="Texture2D" path="res://assets/icons/settings.svg" id="5_settings"]
 [ext_resource type="Texture2D" path="res://assets/icons/badge_gold.svg" id="6_badge"]
@@ -182,7 +182,7 @@ alignment = 1
 
 [node name="Logo" type="TextureRect" parent="Margin/Layout/Hero"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 250)
+custom_minimum_size = Vector2(0, 300)
 layout_mode = 2
 texture = ExtResource("3_logo")
 expand_mode = 1

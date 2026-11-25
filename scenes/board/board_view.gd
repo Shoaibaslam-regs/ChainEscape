@@ -193,6 +193,9 @@ func tap_at(local_position: Vector2) -> void:
 		arrow_locked.emit(arrow, pending)
 		return
 	var blocker := _board.find_blocker(arrow.id)
+	# A chain across the path blocks too: its key arrow is the one to free.
+	if blocker == null:
+		blocker = _board.find_blocking_chain(arrow.id)
 	if blocker != null or _board.is_walled_in(arrow.id):
 		var causes: Array[Arrow] = []
 		if blocker != null:
@@ -224,11 +227,58 @@ func tap_at(local_position: Vector2) -> void:
 		board_cleared.emit()
 
 
+## Arrows go when the finger lifts, not when it lands: pressing dips the
+## arrow, lifting on the same cell releases it, and sliding off before
+## lifting cancels (a mistaken touch costs nothing).
 func _gui_input(event: InputEvent) -> void:
 	var mouse := event as InputEventMouseButton
-	if mouse != null and mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
-		tap_at(mouse.position)
+	if mouse != null and mouse.button_index == MOUSE_BUTTON_LEFT:
+		if mouse.pressed:
+			press_at(mouse.position)
+		else:
+			release_at(mouse.position)
 		accept_event()
+		return
+	var motion := event as InputEventMouseMotion
+	if motion != null and _pressed_cell != NO_PRESS and local_to_cell(motion.position) != _pressed_cell:
+		cancel_press()
+
+
+const NO_PRESS := Vector2i(-99, -99)
+var _pressed_cell: Vector2i = NO_PRESS
+
+
+## Finger down: remember the cell and dip its arrow (public for tests).
+func press_at(local_position: Vector2) -> void:
+	cancel_press()
+	if _board == null:
+		return
+	_pressed_cell = local_to_cell(local_position)
+	var arrow := _board.get_arrow_at(_pressed_cell)
+	if arrow != null and not _intro_playing:
+		var view: ArrowView = _arrow_views.get(arrow.id)
+		if view != null:
+			view.set_pressed(true)
+
+
+## Finger up: releases the arrow if it is still over the cell it pressed.
+func release_at(local_position: Vector2) -> void:
+	var cell := _pressed_cell
+	cancel_press()
+	if cell != NO_PRESS and local_to_cell(local_position) == cell:
+		tap_at(local_position)
+
+
+func cancel_press() -> void:
+	if _pressed_cell == NO_PRESS:
+		return
+	if _board != null:
+		var arrow := _board.get_arrow_at(_pressed_cell)
+		if arrow != null:
+			var view: ArrowView = _arrow_views.get(arrow.id)
+			if view != null:
+				view.set_pressed(false)
+	_pressed_cell = NO_PRESS
 
 
 func _notification(what: int) -> void:
