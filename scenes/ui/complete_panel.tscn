@@ -43,7 +43,7 @@ alignment = 1
 
 [node name="Padlock" type="Control" parent="Margin/Layout/Hero"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 220)
+custom_minimum_size = Vector2(0, 340)
 layout_mode = 2
 mouse_filter = 2
 script = ExtResource("2_seal")

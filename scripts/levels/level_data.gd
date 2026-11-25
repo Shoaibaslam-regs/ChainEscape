@@ -71,6 +71,8 @@ const TWIST_DESCRIPTIONS: Dictionary[String, String] = {
 @export var is_first_merge: bool = false
 ## The first master-arrow level (shows the master pop-up).
 @export var is_first_master: bool = false
+## An EXTREME level (much harder than the levels around it).
+@export var is_extreme: bool = false
 
 
 func has_twist(twist: String) -> bool:

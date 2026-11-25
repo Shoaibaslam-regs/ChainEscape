@@ -203,3 +203,21 @@ The existing architecture stays: rules in `scripts/core`, views in `scenes/board
   - Hints (earning plan step 1, offline): 2 starter hints, +1 free every 5
     levels cleared (from the research; pending the user's confirmation),
     numbered levels only, glow on the most useful free arrow.
+- 2026-11-26 (user, built; install pending): harder from level 9 (difficulty
+  starts at 0.5, hardness floor 0.3), EXTREME level every 3-4 levels (from
+  11; red label); hints = 2 by default, +1 per rewarded video (max 10/day),
+  no free hints for levels; simpler Home (no Achievements/Themes dock; rank
+  opens Achievements); icon + splash + Level complete = "padlock escape"
+  (concept I, no stars) with a real shackle lift-and-swing; light red screen
+  wash on counted wrong moves; wrong moves per level vary: mostly 3, ~1 in 4
+  levels 2, ~1 in 10 only 1 (from level 15), Vaults 2, EXTREME/Master 3,
+  announced at level start ("Only 1 move!").
+- 2026-11-26 (user, built; install pending): polish: music re-encoded to Ogg
+  Vorbis (14 MB -> 4.7 MB; debug APK 74.3 -> 65.8 MB); debug-only level
+  build timing in the log for on-phone speed checks; languages skipped for
+  now (user). Account/Profile: player card on Home (avatar + frame + name,
+  rank) opens Profile: name (2-16 chars, cleaned), 10 avatars and 7 frames
+  earned by ranks/achievements (no paid cosmetics in v1.0 per CLAUDE.md),
+  Achievements moved inside Profile, "Continue with Facebook" via the
+  SocialLogin slot (says "coming soon" until the user's OAuth is plugged in).
+  Home hero art = padlock-escape emblem (matches the splash).

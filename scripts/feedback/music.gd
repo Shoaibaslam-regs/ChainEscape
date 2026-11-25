@@ -5,7 +5,7 @@ extends Node
 ## docs/audio_previews/MUSIC_SOURCES.md). Off when the player turns music
 ## off in Settings.
 
-const TRACK_PATH := "res://assets/audio/music_november_snow.mp3"
+const TRACK_PATH := "res://assets/audio/music_november_snow.ogg"
 ## Kept well under the sound effects.
 const VOLUME_DB := -20.0
 const SILENT_DB := -60.0

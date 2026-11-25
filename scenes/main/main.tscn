@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scenes/main/main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/screens/home_screen.tscn" id="2_home"]
@@ -9,6 +9,7 @@
 [ext_resource type="PackedScene" path="res://scenes/screens/daily_screen.tscn" id="7_daily"]
 [ext_resource type="PackedScene" path="res://scenes/screens/achievements_screen.tscn" id="8_achievements"]
 [ext_resource type="PackedScene" path="res://scenes/screens/weekly_screen.tscn" id="9_weekly"]
+[ext_resource type="PackedScene" path="res://scenes/screens/profile_screen.tscn" id="10_profile"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -25,6 +26,7 @@ settings_panel_scene = ExtResource("6_settings")
 daily_screen_scene = ExtResource("7_daily")
 achievements_screen_scene = ExtResource("8_achievements")
 weekly_screen_scene = ExtResource("9_weekly")
+profile_screen_scene = ExtResource("10_profile")
 level_catalog = ExtResource("4_levels")
 
 [node name="ScreenContainer" type="Control" parent="."]

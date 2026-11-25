@@ -167,23 +167,28 @@ func test_rank_titles_by_points() -> void:
 	check_eq(Rank.progress(999999), 1.0, "full bar at the top")
 
 
-func test_hint_store_starter_free_hints_and_reset() -> void:
+func test_hint_store_starter_ad_hints_and_reset() -> void:
 	var path := temp_save_path("hints")
 	var store := HintStore.new(path)
 	store.load_hints()
-	check_eq(store.get_hints(), HintStore.STARTER_HINTS, "starter hints")
+	check_eq(store.get_hints(), 2, "2 hints by default")
 	check(store.use_hint() and store.use_hint(), "use both")
 	check(not store.use_hint(), "cannot go below zero")
-	check(not store.on_level_cleared(4), "no free hint on level 4")
-	check(store.on_level_cleared(5), "a free hint every 5 levels")
-	check(not store.on_level_cleared(5), "replaying level 5 gives nothing more")
-	check_eq(store.levels_until_free_hint(7), 3, "3 levels to the next free hint")
+	check(not store.on_level_cleared(5) and not store.on_level_cleared(10), "no free hints for clearing levels")
+	check_eq(store.get_hints(), 0, "still none")
+	for i: int in HintStore.MAX_AD_HINTS_PER_DAY:
+		check(store.earn_from_ad("2026-11-26"), "video %d gives a hint" % (i + 1))
+	check(not store.earn_from_ad("2026-11-26"), "daily video cap reached")
+	check_eq(store.get_hints(), HintStore.MAX_AD_HINTS_PER_DAY, "1 hint per video")
+	var capped := HintStore.new(path)
+	capped.load_hints()
+	check(not capped.can_earn_from_ad("2026-11-26"), "the daily cap survives a restart")
+	check(capped.earn_from_ad("2026-11-27"), "a new day, new videos")
 	var reloaded := HintStore.new(path)
 	reloaded.load_hints()
-	check_eq(reloaded.get_hints(), 1, "saved and restored")
-	check(not reloaded.on_level_cleared(5), "and remembers level 5 already paid out")
+	check_eq(reloaded.get_hints(), HintStore.MAX_AD_HINTS_PER_DAY + 1, "saved and restored")
 	reloaded.reset()
-	check_eq(reloaded.get_hints(), HintStore.STARTER_HINTS, "reset gives the starter hints back")
+	check_eq(reloaded.get_hints(), 2, "reset: back to 2")
 	remove_file(path)
 
 

@@ -11,13 +11,14 @@ var _paths: PackedStringArray = []
 ## Boots Main with throwaway save files so the player's data is untouched.
 func _boot(name: String) -> Main:
 	var main := (load(MAIN_SCENE_PATH) as PackedScene).instantiate() as Main
-	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily"), temp_save_path(name + "_weekly"), temp_save_path(name + "_hints")])
+	_paths = PackedStringArray([temp_save_path(name), temp_save_path(name + "_settings"), temp_save_path(name + "_achievements"), temp_save_path(name + "_daily"), temp_save_path(name + "_weekly"), temp_save_path(name + "_hints"), temp_save_path(name + "_profile")])
 	main.save_path = _paths[0]
 	main.settings_path = _paths[1]
 	main.achievements_path = _paths[2]
 	main.daily_path = _paths[3]
 	main.weekly_path = _paths[4]
 	main.hints_path = _paths[5]
+	main.profile_path = _paths[6]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -33,6 +34,7 @@ func _relaunch() -> Main:
 	main.daily_path = _paths[3]
 	main.weekly_path = _paths[4]
 	main.hints_path = _paths[5]
+	main.profile_path = _paths[6]
 	main.daily_date_override = "2026-11-24"
 	tree.root.add_child(main)
 	await wait_frames(1)
@@ -337,15 +339,21 @@ func test_home_rewards_card_and_achievements_screen() -> void:
 	tree.root.size = Vector2i(720, 1280)
 	await wait_frames(3)
 	var top := (home.get_node("%SettingsButton") as Control).get_global_rect().position.y
-	var bottom := home.get_view_all_button().get_global_rect().end.y
+	var bottom := home.get_weekly_button().get_global_rect().end.y
 	check(top >= 24.0, "Home top on screen with margin (%d)" % top)
-	check(bottom <= 1280.0 - 24.0, "Home fits a 16:9 phone (dock ends at %d)" % bottom)
+	check(bottom <= 1280.0 - 24.0, "Home fits a 16:9 phone (cards end at %d)" % bottom)
+	check(home.find_child("Dock", true, false) == null and home.find_child("ThemesButton", true, false) == null, "no duplicate Achievements / Themes buttons")
+	check(home.get_node("%PointsLabel").text.contains("2/%d ACHIEVEMENTS" % AchievementTracker.DEFINITIONS.size()), "the rank line shows achievements and opens them")
 	tree.root.size = old_size
 	await wait_frames(2)
 	home.get_view_all_button().pressed.emit()
 	await wait_frames(1)
+	var profile := main.get_current_screen() as ProfileScreen
+	check(profile != null, "the player card opens Profile")
+	profile.get_achievements_button().pressed.emit()
+	await wait_frames(1)
 	var screen := main.get_current_screen() as AchievementsScreen
-	check(screen != null, "View all opens the Achievements screen")
+	check(screen != null, "Profile opens the Achievements screen")
 	if screen != null:
 		check_eq(screen.get_row_count(), AchievementTracker.DEFINITIONS.size(), "every achievement listed")
 		await wait_frames(2)
@@ -354,7 +362,65 @@ func test_home_rewards_card_and_achievements_screen() -> void:
 		check(screen.get_scroll().vertical_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER, "no scrollbar, drag to scroll")
 		main.handle_back()
 		await wait_frames(1)
-		check(main.get_current_screen() is HomeScreen, "back returns Home")
+		check(main.get_current_screen() is ProfileScreen, "back returns to Profile")
+		main.handle_back()
+		await wait_frames(1)
+		check(main.get_current_screen() is HomeScreen, "and back again returns Home")
+	await _shutdown(main)
+
+
+func test_profile_name_avatar_frame_and_facebook() -> void:
+	var main: Main = await _boot("flow_profile")
+	var home := main.get_current_screen() as HomeScreen
+	if home == null:
+		(main.get_current_screen() as SplashScreen).skip()
+		await wait_frames(2)
+		home = main.get_current_screen() as HomeScreen
+	check_eq(home.get_player_name_text(), ProfileStore.DEFAULT_NAME, "new players are called Player")
+	home.get_view_all_button().pressed.emit()
+	await wait_frames(2)
+	var profile := main.get_current_screen() as ProfileScreen
+	var old_size := tree.root.size
+	tree.root.size = Vector2i(720, 1280)
+	await wait_frames(3)
+	var bottom := profile.get_facebook_button().get_global_rect().end.y
+	check(bottom <= 1280.0 - 40.0, "Profile fits a 16:9 phone, Facebook included (ends at %d)" % bottom)
+	tree.root.size = old_size
+	await wait_frames(2)
+	# Name: cleaned, too short is refused.
+	var edit := profile.get_name_edit()
+	edit.text = "Amir  the Great!"
+	edit.focus_exited.emit()
+	check_eq(main.get_profile().player_name, "Amir the Great", "the name is tidied and saved")
+	edit.text = "x"
+	edit.focus_exited.emit()
+	check_eq(main.get_profile().player_name, "Amir the Great", "a 1-letter name is refused")
+	check_eq(edit.text, "Amir the Great", "and the field goes back to the saved name")
+	check_eq(profile.get_name_note(), ProfileScreen.NAME_INVALID, "with a short explanation")
+	# Avatars: free ones can be picked, locked ones explain how to earn them.
+	profile.get_item_button(true, "key").pressed.emit()
+	await wait_frames(1)
+	check_eq(main.get_profile().avatar_id, "key", "a free avatar is chosen")
+	check_eq(profile.get_hero_badge().avatar_id, "key", "and shown at once")
+	profile.get_item_button(true, "crown").pressed.emit()
+	await wait_frames(1)
+	check_eq(main.get_profile().avatar_id, "key", "a locked avatar is not chosen")
+	check(profile.get_note(true).contains("Reach Vaultbreaker rank"), "it says how to unlock it (%s)" % profile.get_note(true))
+	profile.get_item_button(false, "gold").pressed.emit()
+	await wait_frames(1)
+	check_eq(main.get_profile().frame_id, ProfileItems.DEFAULT_FRAME, "a locked frame is not chosen")
+	# Facebook: not set up yet, so it says so.
+	profile.get_facebook_button().pressed.emit()
+	await wait_frames(2)
+	check_eq(profile.get_account_note(), SocialLogin.COMING_SOON, "Facebook says coming soon")
+	main.handle_back()
+	await wait_frames(2)
+	home = main.get_current_screen() as HomeScreen
+	check_eq(home.get_player_name_text(), "Amir the Great", "Home shows the new name")
+	await _shutdown(main, false)
+	main = await _relaunch()
+	check_eq(main.get_profile().player_name, "Amir the Great", "the name survives a relaunch")
+	check_eq(main.get_profile().avatar_id, "key", "and so does the avatar")
 	await _shutdown(main)
 
 
@@ -450,6 +516,21 @@ func test_three_wrong_moves_end_the_attempt() -> void:
 	await _shutdown(main)
 
 
+func test_one_move_level() -> void:
+	var main: Main = await _boot("flow_one_move")
+	var game: GameScreen = await _open_game(main)
+	var level := LevelSequence.MOVES_VARY_FROM
+	while main.get_levels().moves_for(level) != 1:
+		level += 1
+	await _start_generated_level(game, level)
+	check_eq(game.get_move_budget().limit, 1, "level %d allows a single wrong move" % level)
+	check_eq(game.get_status_key_count(), 1, "only one key is shown")
+	check(game.get_praise_popup().visible and game.get_praise_popup().text == "Only 1 move!", "the level announces it (%s)" % game.get_praise_popup().text)
+	check(_tap_wrong(game), "one wrong tap")
+	check_eq(game.get_state(), GameScreen.State.OUT_OF_MOVES, "and the attempt is over")
+	await _shutdown(main)
+
+
 func test_watching_ad_grants_one_move() -> void:
 	var main: Main = await _boot("flow_ad")
 	var game: GameScreen = await _open_game(main)
@@ -493,11 +574,12 @@ func test_hidden_links_lock_tap_is_free() -> void:
 	check(game.get_current_level().has_twist(LevelData.TWIST_HIDDEN_LINKS), "hidden links level")
 	var view := game.get_board_view()
 	var board := view.get_board()
+	var before := game.get_move_budget().remaining()
 	for arrow: Arrow in board.get_arrows():
 		if board.is_locked(arrow.id):
 			view.tap_at(view.cell_to_local(arrow.cell))
 			break
-	check_eq(game.get_move_budget().remaining(), 3, "revealing a chain costs nothing")
+	check_eq(game.get_move_budget().remaining(), before, "revealing a chain costs nothing")
 	await _shutdown(main)
 
 
@@ -512,6 +594,10 @@ func test_wrong_tap_is_counted() -> void:
 			view.tap_at(view.cell_to_local(arrow.cell))
 			break
 	check_eq(game.get_wrong_taps(), 1, "blocked tap counted")
+	await wait_seconds(GameScreen.WRONG_FLASH_SECONDS * 0.3)
+	check(game.get_wrong_flash().modulate.a > 0.1, "the screen washes light red")
+	await wait_seconds(GameScreen.WRONG_FLASH_SECONDS)
+	check(game.get_wrong_flash().modulate.a < 0.01, "and clears again")
 	var stuck_id := -1
 	for arrow: Arrow in board.get_arrows():
 		if view.is_marked_wrong(arrow.id):
@@ -521,6 +607,7 @@ func test_wrong_tap_is_counted() -> void:
 	check(view.get_arrow_view(stuck_id).has_wrong_mark(), "and shows a cross mark, not just colour")
 	view.tap_at(view.cell_to_local(board.get_arrow(stuck_id).cell))
 	check_eq(game.get_wrong_taps(), 1, "tapping the red arrow again costs nothing")
+	check(game.get_wrong_flash().modulate.a < 0.01, "and gives no red wash")
 	check(await _clear_level(game), "cleared anyway")
 	check(not game.get_complete_panel().is_clean_shown(), "no clean badge after a wrong tap")
 	await _shutdown(main)
@@ -644,7 +731,7 @@ func test_music_plays_and_can_be_turned_off() -> void:
 	check(not main.get_settings().music_enabled, "setting saved")
 	await wait_seconds(Music.FADE_OUT_SECONDS + 0.3)
 	check(not main.get_music().is_playing(), "music fades out and stops")
-	var stream := load(Music.TRACK_PATH) as AudioStreamMP3
+	var stream := load(Music.TRACK_PATH) as AudioStreamOggVorbis
 	check(stream != null and stream.loop, "the track loops")
 	await _shutdown(main)
 
@@ -700,7 +787,17 @@ func test_hint_shows_a_playable_arrow_and_counts_down() -> void:
 	check_eq(game.get_hint_count_text(), "0", "the badge follows the count")
 	game.use_hint()
 	check_eq(game.get_hint_target(), -1, "no glow without hints")
-	check_eq(main.get_hints().get_hints(), 0, "count never goes below zero")
+	check(game.get_hint_offer().visible, "out of hints: the video offer opens")
+	check(game.get_hint_offer().get_watch_button().visible, "with a Watch video button (test builds fake the video)")
+	game.get_hint_offer().get_watch_button().pressed.emit()
+	await wait_seconds(RewardedAds.DEBUG_AD_SECONDS + 0.2)
+	check_eq(main.get_hints().get_hints(), 1, "a watched video gives exactly 1 hint")
+	check(not game.get_hint_offer().visible, "offer closes")
+	check_eq(game.get_state(), GameScreen.State.PLAYING, "play resumes")
+	main.get_hints().use_hint()
+	game.use_hint()
+	main.handle_back()
+	check(not game.get_hint_offer().visible and game.get_state() == GameScreen.State.PLAYING, "Back closes the offer and resumes")
 	await _shutdown(main)
 
 

@@ -62,6 +62,10 @@ func test_main_opens_on_splash_then_title() -> void:
 	main.save_path = path
 	main.settings_path = temp_save_path("splash_flow_settings")
 	main.achievements_path = temp_save_path("splash_flow_achievements")
+	main.daily_path = temp_save_path("splash_flow_daily")
+	main.weekly_path = temp_save_path("splash_flow_weekly")
+	main.hints_path = temp_save_path("splash_flow_hints")
+	main.profile_path = temp_save_path("splash_flow_profile")
 	tree.root.add_child(main)
 	await wait_frames(1)
 	check(main.get_current_screen() is SplashScreen, "cold start shows the splash")
@@ -71,7 +75,8 @@ func test_main_opens_on_splash_then_title() -> void:
 	await wait_frames(1)
 	remove_file(path)
 	remove_file("user://test_splash_flow_settings.cfg")
-	remove_file("user://test_splash_flow_achievements.cfg")
+	for suffix: String in ["achievements", "daily", "weekly", "hints", "profile"]:
+		remove_file("user://test_splash_flow_%s.cfg" % suffix)
 
 
 func test_theme_uses_cairo_and_defines_styles() -> void:
@@ -86,31 +91,26 @@ func test_theme_uses_cairo_and_defines_styles() -> void:
 	check(theme.has_stylebox("normal", "PrimaryButton"), "primary button style")
 
 
-func test_splash_builds_the_icon_with_its_sounds() -> void:
+func test_splash_tells_the_padlock_escape_with_sounds() -> void:
 	await _open_splash()
 	var feedback := Feedback.new()
 	tree.root.add_child(feedback)
 	await wait_frames(1)
 	var heard: Array[Feedback.Sound] = []
 	_splash.play(false, feedback)
-	await wait_frames(1)
-	var arrow := _splash.get_layer("arrow")
-	var chain_a := _splash.get_layer("chain_a")
-	var chain_b := _splash.get_layer("chain_b")
-	var lock := _splash.get_layer("lock")
-	check(arrow.scale.x < 0.5, "the arrow starts small in the centre")
-	check(chain_a.position.y < 0.0 and chain_b.position.y > 0.0, "one chain starts above, the other below")
-	check(lock.modulate.a < 0.1, "the lock is not there yet")
-	# Note each sound as it plays.
+	await wait_frames(3)
+	check(_splash.get_layer("chain").position.x < 0.0, "the chain starts off to the left")
+	check(_splash.get_layer("lock_body").modulate.a < 0.1, "no padlock yet")
 	for step: int in 70:
 		await wait_seconds(0.04)
 		if heard.is_empty() or heard.back() != feedback.last_sound:
 			heard.append(feedback.last_sound)
-	check(is_equal_approx(chain_a.position.y, 0.0) and is_equal_approx(chain_b.position.y, 0.0), "both chains in place")
-	check(is_equal_approx(lock.position.y, 0.0) and lock.modulate.a > 0.99, "the lock sits on the crossing")
-	for sound: Feedback.Sound in [Feedback.Sound.SPLASH_RISE, Feedback.Sound.CHAIN_SLIDE, Feedback.Sound.LINK_JOIN, Feedback.Sound.LOCK_SNAP, Feedback.Sound.TITLE_CHIME]:
+	check(is_equal_approx(_splash.get_layer("chain").position.x, 0.0), "the chain is in place")
+	check(_splash.get_emblem().get_shackle_open() > 0.95, "the shackle lifted and swung open")
+	check(_splash.get_layer("chain_link").modulate.a < 0.01, "the middle link broke away")
+	check(_splash.get_layer("arrow").position.length() < 0.5, "the arrow escaped to its place")
+	for sound: Feedback.Sound in [Feedback.Sound.CHAIN_SLIDE, Feedback.Sound.LINK_JOIN, Feedback.Sound.LOCK_SNAP, Feedback.Sound.SPLASH_RISE, Feedback.Sound.EXIT, Feedback.Sound.TITLE_CHIME]:
 		check(heard.has(sound), "splash plays %s" % Feedback.Sound.keys()[sound])
-	check(heard.find(Feedback.Sound.LOCK_SNAP) < heard.find(Feedback.Sound.TITLE_CHIME), "lock before the title chime")
 	feedback.queue_free()
 	await _close_splash()
 

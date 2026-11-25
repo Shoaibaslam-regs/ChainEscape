@@ -15,7 +15,9 @@ extends RefCounted
 ## - Every 50th level hides a master arrow.
 
 ## Generated levels it takes to reach the generator's hardest settings.
-const DIFFICULTY_RAMP_LEVELS := 40
+const DIFFICULTY_RAMP_LEVELS := 30
+## Generated levels start this hard (0..1), not from the gentlest settings.
+const DIFFICULTY_START := 0.5
 const FIRST_CHALLENGE_LEVEL := 27
 const CHALLENGE_GAP_MIN := 20
 const CHALLENGE_GAP_MAX := 30
@@ -33,16 +35,34 @@ const MASTER_INTERVAL := 50
 ## steeply at first (square-root curve), reaching LATE_HARDNESS_MAX after
 ## LATE_HARDNESS_LEVELS more levels. Vault challenges stay clearly harder:
 ## each is at least CHALLENGE_HARDNESS_MARGIN above the levels around it.
-const HARDNESS_START_LEVEL := 20
-const LATE_HARDNESS_LEVELS := 280
+const HARDNESS_START_LEVEL := 9
+const LATE_HARDNESS_LEVELS := 250
+## Ordinary levels start at HARDNESS_FLOOR and climb to LATE_HARDNESS_MAX.
+const HARDNESS_FLOOR := 0.3
 const LATE_HARDNESS_MAX := 0.9
+## An EXTREME level every 3-4 levels: from EXTREME_START, the levels 0 and 3
+## steps into each 7-level cycle (so 3 apart, then 4, then 3, ...). They get
+## the hardest settings, a bigger board and a hardness boost.
+const EXTREME_START := 11
+const EXTREME_CYCLE := 7
+const EXTREME_OFFSETS: Array[int] = [0, 3]
+const EXTREME_HARDNESS_BOOST := 0.45
+const EXTREME_MIN_HARDNESS := 0.75
+const EXTREME_SIZE_BOOST := 0.35
+## Wrong moves allowed per level: usually 3, but from MOVES_VARY_FROM some
+## levels allow only 2 (MOVES_TWO_CHANCE) or just 1 (MOVES_ONE_CHANCE).
+## Vault challenges allow 2; EXTREME and Master levels keep 3 (hard but fair).
+const MOVES_VARY_FROM := 15
+const MOVES_ONE_CHANCE := 10
+const MOVES_TWO_CHANCE := 25
+const MOVES_SEED_SALT := "chain-escape-moves-v1"
 const CHALLENGE_HARDNESS_START := 0.2
 const CHALLENGE_HARDNESS_STEP := 0.07
 const CHALLENGE_HARDNESS_MARGIN := 0.25
 ## Boards grow beyond 8 x 10 from BOARD_GROWTH_START_LEVEL, reaching their
 ## largest size BOARD_GROWTH_LEVELS later.
-const BOARD_GROWTH_START_LEVEL := 70
-const BOARD_GROWTH_LEVELS := 230
+const BOARD_GROWTH_START_LEVEL := 30
+const BOARD_GROWTH_LEVELS := 200
 ## The order in which twists are introduced.
 const TWIST_ORDER: Array[String] = [
 	LevelData.TWIST_DOUBLE_LOCKS,
@@ -140,12 +160,17 @@ func _generate(level_number: int) -> LevelData:
 	var difficulty := difficulty_for(level_number)
 	if challenge >= 0:
 		difficulty = minf(difficulty + CHALLENGE_DIFFICULTY_BONUS, 1.0)
+	var started_usec := Time.get_ticks_usec()
 	var level := LevelGenerator.generate(level_number, difficulty, twists, is_master_level(level_number), hardness_for(level_number), size_for(level_number))
+	# Debug builds only: lets us read real build times from the phone's log.
+	if OS.is_debug_build():
+		print("[levels] built level %d in %d ms" % [level_number, (Time.get_ticks_usec() - started_usec) / 1000])
 	if level == null:
 		return null
 	if challenge >= 0:
 		level.is_challenge = true
 		level.new_twist = TWIST_ORDER[challenge] if challenge < TWIST_ORDER.size() else ""
+	level.is_extreme = is_extreme(level_number)
 	level.is_first_merge = level_number == first_merge_level()
 	level.is_first_master = level_number == first_master_level()
 	return level
@@ -239,8 +264,36 @@ static func _pick_distinct(pool: Array[String], count: int, rng: RandomNumberGen
 
 ## 0.0 for the first generated level, rising to 1.0 over DIFFICULTY_RAMP_LEVELS.
 func difficulty_for(level_number: int) -> float:
+	if is_extreme(level_number):
+		return 1.0
 	var generated_index := level_number - _handmade.count() - 1
-	return clampf(float(generated_index) / DIFFICULTY_RAMP_LEVELS, 0.0, 1.0)
+	return lerpf(DIFFICULTY_START, 1.0, clampf(float(generated_index) / DIFFICULTY_RAMP_LEVELS, 0.0, 1.0))
+
+
+## Wrong moves allowed on numbered level [param level_number] (1 to 3).
+func moves_for(level_number: int) -> int:
+	if not is_generated(level_number) or is_extreme(level_number) or is_master_level(level_number):
+		return WrongMoveBudget.DEFAULT_LIMIT
+	if challenge_index(level_number) >= 0:
+		return 2
+	if level_number < MOVES_VARY_FROM:
+		return WrongMoveBudget.DEFAULT_LIMIT
+	var roll := absi(("%s:%d" % [MOVES_SEED_SALT, level_number]).hash()) % 100
+	if roll < MOVES_ONE_CHANCE:
+		return 1
+	if roll < MOVES_ONE_CHANCE + MOVES_TWO_CHANCE:
+		return 2
+	return WrongMoveBudget.DEFAULT_LIMIT
+
+
+## True for the EXTREME levels (every 3-4 levels; never a Vault or Master
+## level, which are special already).
+func is_extreme(level_number: int) -> bool:
+	if not is_generated(level_number) or level_number < EXTREME_START:
+		return false
+	if is_master_level(level_number) or challenge_index(level_number) >= 0:
+		return false
+	return EXTREME_OFFSETS.has((level_number - EXTREME_START) % EXTREME_CYCLE)
 
 
 ## Extra hardness (0..1) beyond the difficulty ramp. Ordinary levels start
@@ -252,6 +305,8 @@ func hardness_for(level_number: int) -> float:
 	if challenge >= 0:
 		var scheduled := CHALLENGE_HARDNESS_START + challenge * CHALLENGE_HARDNESS_STEP
 		return minf(maxf(scheduled, ordinary + CHALLENGE_HARDNESS_MARGIN), 1.0)
+	if is_extreme(level_number):
+		return minf(maxf(ordinary + EXTREME_HARDNESS_BOOST, EXTREME_MIN_HARDNESS), 1.0)
 	return ordinary
 
 
@@ -259,14 +314,17 @@ func _ordinary_hardness(level_number: int) -> float:
 	if not is_generated(level_number):
 		return 0.0
 	var t := clampf(float(level_number - HARDNESS_START_LEVEL) / LATE_HARDNESS_LEVELS, 0.0, 1.0)
-	return sqrt(t) * LATE_HARDNESS_MAX
+	return lerpf(HARDNESS_FLOOR, LATE_HARDNESS_MAX, sqrt(t))
 
 
 ## 0..1: how far the board has grown past 8 x 10 (more, smaller arrows).
 func size_for(level_number: int) -> float:
 	if not is_generated(level_number):
 		return 0.0
-	return clampf(float(level_number - BOARD_GROWTH_START_LEVEL) / BOARD_GROWTH_LEVELS, 0.0, 1.0)
+	var growth := clampf(float(level_number - BOARD_GROWTH_START_LEVEL) / BOARD_GROWTH_LEVELS, 0.0, 1.0)
+	if is_extreme(level_number):
+		growth = minf(growth + EXTREME_SIZE_BOOST, 1.0)
+	return growth
 
 
 ## 0-based index of the Vault challenge at [param level_number], or -1.

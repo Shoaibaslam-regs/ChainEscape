@@ -1,17 +1,17 @@
 class_name HomeScreen
 extends Control
-## The lobby: rank and stars at the top, the hero on a living backdrop
-## (slow light rays, drifting gold dust), a big Play button with a shine,
-## Daily and Weekly cards, and a dock for Achievements and Themes. Elements
+## The lobby, kept simple: rank and stars at the top (the rank opens
+## Achievements; Settings, with the themes, is the gear), the hero on a
+## living backdrop (slow light rays, drifting gold dust), a big Play button
+## with a shine, and the Daily and Weekly cards. Elements
 ## arrive in a short cascade. There is no level select; play only moves
 ## forward. Reduce motion makes it all still.
 
 signal play_requested
 signal settings_requested
 signal daily_requested
-signal rewards_requested
+signal profile_requested
 signal weekly_requested
-signal themes_requested
 
 ## The hero art "breathes" very slowly: a calm sign of life, not a distraction.
 const BREATH_SECONDS := 3.2
@@ -30,6 +30,8 @@ const TITLE_GLINT_EVERY := 7.0
 var _breath: Tween
 var _glint_timer: Timer
 var _reduced_motion: bool = false
+var _points_text: String = "0 POINTS"
+var _achievements_text: String = ""
 
 
 func _ready() -> void:
@@ -37,9 +39,7 @@ func _ready() -> void:
 	%SettingsButton.pressed.connect(settings_requested.emit)
 	%DailyButton.pressed.connect(daily_requested.emit)
 	%WeeklyButton.pressed.connect(weekly_requested.emit)
-	%AchievementsButton.pressed.connect(rewards_requested.emit)
-	%RankButton.pressed.connect(rewards_requested.emit)
-	%ThemesButton.pressed.connect(themes_requested.emit)
+	%RankButton.pressed.connect(profile_requested.emit)
 	_logo.resized.connect(_on_logo_moved)
 	_logo.item_rect_changed.connect(_on_logo_moved)
 	_glint_timer = Timer.new()
@@ -94,10 +94,20 @@ func set_points(points: int) -> void:
 	var rank := Rank.for_points(points)
 	%RankName.text = String(rank["name"]).to_upper()
 	%RankBar.value = Rank.progress(points) * 100.0
-	%PointsLabel.text = "%d %s" % [points, "POINT" if points == 1 else "POINTS"]
+	_points_text = "%d %s" % [points, "POINT" if points == 1 else "POINTS"]
+	_refresh_rank_line()
 	if rank["next_points"] >= 0:
 		%RankButton.tooltip_text = "%d points to %s" % [int(rank["next_points"]) - points, rank["next_name"]]
-	%ThemesValue.text = _next_theme_text(points)
+
+
+## The player card: name, avatar and frame (already resolved to unlocked ones).
+func set_profile(player_name: String, avatar_id: String, frame_id: String) -> void:
+	%PlayerName.text = player_name
+	(%Avatar as AvatarBadge).set_profile(avatar_id, frame_id)
+
+
+func get_player_name_text() -> String:
+	return %PlayerName.text
 
 
 func set_stars(stars: int) -> void:
@@ -122,11 +132,19 @@ func set_weekly_progress(solved: int, total: int, days_left: int) -> void:
 
 ## Achievements unlocked, shown in the dock.
 func set_rewards(tracker: AchievementTracker) -> void:
-	%AchievementsValue.text = "%d/%d" % [tracker.unlocked_count(), AchievementTracker.DEFINITIONS.size()]
+	_achievements_text = "%d/%d" % [tracker.unlocked_count(), AchievementTracker.DEFINITIONS.size()]
+	_refresh_rank_line()
 
 
 func get_points_text() -> String:
-	return %PointsLabel.text
+	return _points_text
+
+
+func _refresh_rank_line() -> void:
+	var line := _points_text
+	if not _achievements_text.is_empty():
+		line += "  ·  %s ACHIEVEMENTS ›" % _achievements_text
+	%PointsLabel.text = line
 
 
 func get_rank_text() -> String:
@@ -138,7 +156,7 @@ func get_stars_text() -> String:
 
 
 func get_rewards_text() -> String:
-	return %AchievementsValue.text
+	return _achievements_text
 
 
 func get_daily_status() -> String:
@@ -157,12 +175,9 @@ func get_weekly_button() -> Button:
 	return %WeeklyButton
 
 
+## The rank opens Achievements (the only way in from Home).
 func get_view_all_button() -> Button:
-	return %AchievementsButton
-
-
-func get_themes_button() -> Button:
-	return %ThemesButton
+	return %RankButton
 
 
 func get_play_button() -> Button:
@@ -178,15 +193,8 @@ func handle_back() -> bool:
 	return false
 
 
-func _next_theme_text(points: int) -> String:
-	var next := ArrowTheme.next_locked(points)
-	if next.is_empty():
-		return "All unlocked"
-	return "%s · %d/%d" % [next["name"], points, next["points"]]
-
-
 func _cascade_nodes() -> Array[CanvasItem]:
-	return [%TopBar, %Hero, _play_button, %ModeRow, %Dock]
+	return [%TopBar, %Hero, _play_button, %ModeRow]
 
 
 ## Each block fades in a beat after the one above it.

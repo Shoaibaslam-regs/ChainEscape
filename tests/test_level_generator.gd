@@ -100,12 +100,12 @@ func test_difficulty_increases_then_holds() -> void:
 	var sequence := _get_sequence()
 	var start := sequence.handmade_count() + 1
 	var ramp_end := start + LevelSequence.DIFFICULTY_RAMP_LEVELS
-	check_eq(sequence.difficulty_for(start), 0.0, "first generated level is the gentlest")
+	check_eq(sequence.difficulty_for(start), LevelSequence.DIFFICULTY_START, "generated levels start already demanding")
 	check_eq(sequence.difficulty_for(ramp_end), 1.0, "hardest settings reached at end of ramp")
 	check_eq(sequence.difficulty_for(ramp_end + 5000), 1.0, "and held there")
 	var early := _average_arrows(sequence, start, 15)
 	var late := _average_arrows(sequence, ramp_end, 15)
-	check(late > early * 1.4, "late levels have clearly more arrows (%.1f vs %.1f)" % [late, early])
+	check(late > early * 1.15, "late levels still have more arrows (%.1f vs %.1f)" % [late, early])
 
 
 func test_far_levels_generate() -> void:
@@ -137,7 +137,8 @@ func test_generation_is_fast_enough() -> void:
 	print("  hardest-tier generation: %.1f ms per level (desktop)" % average_ms)
 	# Generated on a worker thread while the previous level is played, so the
 	# budget is "ready long before the player finishes", not "instant".
-	check(average_ms < 150.0, "hard levels generate in under 150 ms on desktop (%.1f ms)" % average_ms)
+	# Includes EXTREME levels (every 3-4 levels), the slowest to build.
+	check(average_ms < 300.0, "hard levels generate in under 300 ms on desktop (%.1f ms)" % average_ms)
 	var fresh := LevelSequence.new(load("res://levels/level_catalog.tres"))
 	var big_started := Time.get_ticks_usec()
 	fresh.get_level(400)
@@ -306,19 +307,22 @@ func test_ordinary_levels_keep_getting_harder() -> void:
 	check(sequence.hardness_for(100) >= 0.4, "clearly harder by level 100 (%.2f)" % sequence.hardness_for(100))
 	var previous := 0.0
 	for level_number: int in [30, 60, 100, 150, 220, 300]:
-		if sequence.challenge_index(level_number) >= 0:
+		if sequence.challenge_index(level_number) >= 0 or sequence.is_extreme(level_number):
 			continue
 		check(sequence.hardness_for(level_number) >= previous, "keeps rising at level %d" % level_number)
 		previous = sequence.hardness_for(level_number)
 	check(is_equal_approx(sequence.hardness_for(5001), LevelSequence.LATE_HARDNESS_MAX), "capped")
 	for index: int in 10:
 		var vault := sequence.challenge_level(index)
-		check(sequence.hardness_for(vault) > sequence.hardness_for(vault - 1) + 0.2 or sequence.hardness_for(vault) == 1.0, "vault %d harder than the level before it" % index)
+		var before := vault - 1
+		while sequence.is_extreme(before) or sequence.challenge_index(before) >= 0:
+			before -= 1
+		check(sequence.hardness_for(vault) > sequence.hardness_for(before) + 0.2 or sequence.hardness_for(vault) == 1.0, "vault %d clearly harder than the ordinary level before it" % index)
 
 
 func test_boards_grow_with_more_smaller_arrows() -> void:
 	var sequence := _get_sequence()
-	check_eq(sequence.size_for(60), 0.0, "boards stay 8 x 10 at most early on")
+	check_eq(sequence.size_for(29), 0.0, "ordinary boards stay 8 x 10 at most early on")
 	check_eq(sequence.size_for(1000), 1.0, "and grow to the largest size later")
 	var biggest := Vector2i.ZERO
 	var arrows := 0
@@ -370,3 +374,40 @@ func test_chains_reach_across_the_board() -> void:
 			check(LevelGenerator.is_clear_link(Vector2i(link.x, link.y), Vector2i(link.z, link.w), arrows, others), "level %d: chain %s is clear (not over arrows, few crossings)" % [level_number, link])
 	check(far_links * 4 >= links, "at least a quarter of late chains reach 2+ cells (%d of %d)" % [far_links, links])
 	check(biggest.y >= 14, "late boards reach 14-15 rows (%d)" % biggest.y)
+
+
+func test_extreme_levels_every_three_or_four() -> void:
+	var sequence := _get_sequence()
+	var extremes: Array[int] = []
+	for level_number: int in range(1, 120):
+		if sequence.is_extreme(level_number):
+			extremes.append(level_number)
+	check(extremes.size() > 25 and extremes[0] == LevelSequence.EXTREME_START, "extreme levels start early and keep coming")
+	for index: int in range(1, extremes.size()):
+		var gap := extremes[index] - extremes[index - 1]
+		check(gap >= 3 and gap <= 7, "gap %d between extreme levels %d and %d" % [gap, extremes[index - 1], extremes[index]])
+	for level_number: int in extremes:
+		check(sequence.challenge_index(level_number) < 0 and not sequence.is_master_level(level_number), "level %d is not also a Vault or Master" % level_number)
+	var level := sequence.get_level(extremes[0])
+	var neighbour := sequence.get_level(extremes[0] + 1)
+	check(level.is_extreme and not neighbour.is_extreme, "flagged for the label")
+	var hard := BoardSolver.count_solution_rounds(level.build_board())
+	var normal := BoardSolver.count_solution_rounds(neighbour.build_board())
+	check(hard > normal, "an extreme level needs more steps (%d vs %d)" % [hard, normal])
+
+
+func test_moves_vary_between_levels() -> void:
+	var sequence := _get_sequence()
+	var counts := {1: 0, 2: 0, 3: 0}
+	for level_number: int in range(LevelSequence.MOVES_VARY_FROM, 400):
+		var moves := sequence.moves_for(level_number)
+		counts[moves] += 1
+		check_eq(sequence.moves_for(level_number), moves, "level %d: same moves every time" % level_number)
+		if sequence.is_extreme(level_number) or sequence.is_master_level(level_number):
+			check_eq(moves, 3, "EXTREME / Master level %d keeps 3 moves" % level_number)
+		elif sequence.challenge_index(level_number) >= 0:
+			check_eq(moves, 2, "Vault %d allows 2 moves" % level_number)
+	check(counts[3] > counts[2] and counts[2] > counts[1] and counts[1] > 10, "mostly 3, sometimes 2, now and then only 1 (%s)" % counts)
+	for level_number: int in range(9, LevelSequence.MOVES_VARY_FROM):
+		if not sequence.is_extreme(level_number):
+			check_eq(sequence.moves_for(level_number), 3, "early level %d gives 3 moves" % level_number)

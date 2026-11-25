@@ -35,6 +35,12 @@ const COMPLETE_VIBRATION_MS := 45
 @onready var _hint_count: Label = %HintCount
 var _hints: HintStore
 var _hint_glow := HintGlow.new()
+var _hint_offer := HintOfferPanel.new()
+## A soft red wash over the whole screen when a wrong move is counted.
+var _wrong_flash := ColorRect.new()
+var _wrong_flash_tween: Tween
+const WRONG_FLASH_PEAK := 0.18
+const WRONG_FLASH_SECONDS := 0.35
 @onready var _pause_panel: PausePanel = %PausePanel
 @onready var _complete_panel: CompletePanel = %CompletePanel
 @onready var _tip_label: Label = %TipLabel
@@ -77,6 +83,14 @@ func _ready() -> void:
 	_pause_button.pressed.connect(pause)
 	_restart_button.pressed.connect(restart)
 	_hint_button.pressed.connect(use_hint)
+	_wrong_flash.color = Palette.CORAL
+	_wrong_flash.modulate.a = 0.0
+	_wrong_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_wrong_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_wrong_flash)
+	add_child(_hint_offer)
+	_hint_offer.watch_requested.connect(_on_hint_video_requested)
+	_hint_offer.closed.connect(_on_hint_offer_closed)
 	_hint_count.add_theme_stylebox_override("normal", _badge_style())
 	_board_view.arrow_exited.connect(_on_arrow_exited)
 	_board_view.arrow_blocked.connect(_on_wrong_tap.unbind(2))
@@ -173,6 +187,11 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 	if not is_daily() and _levels != null:
 		_levels.prefetch(_level_number + 1)
 	_overline.text = _overline_for(level)
+	# EXTREME levels warn in coral; everything else stays gold.
+	if level.is_extreme:
+		_overline.add_theme_color_override("font_color", Palette.CORAL)
+	else:
+		_overline.remove_theme_color_override("font_color")
 	_restart_button.disabled = false
 	_pause_button.disabled = false
 	_hint_button.disabled = false
@@ -191,7 +210,8 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 	_show_tip(level.tip if not is_daily() else "")
 	_guided_left = level.guided_moves if not is_daily() else 0
 	# Tutorial levels and the Daily challenge have no wrong-move limit.
-	_move_budget.reset(not is_daily() and _levels != null and _levels.is_generated(_level_number))
+	var limited := not is_daily() and _levels != null and _levels.is_generated(_level_number)
+	_move_budget.reset(limited, _levels.moves_for(_level_number) if limited else WrongMoveBudget.DEFAULT_LIMIT)
 	_update_moves()
 	# The board always comes first; a twist pop-up (if any) rises over it once
 	# the arrows have landed. Play starts when it is dismissed.
@@ -202,12 +222,16 @@ func _load(level: LevelData, title: String, missing_message: String) -> void:
 	else:
 		if _state == State.INTRO:
 			_twist_popup.open(level)
+		else:
+			_announce_moves()
 		_schedule_hand()
 
 
 func _on_board_intro_finished() -> void:
 	if _state == State.INTRO and not _twist_popup.visible:
 		_twist_popup.open(_current_level)
+	elif _state == State.PLAYING:
+		_announce_moves()
 	_schedule_hand()
 
 
@@ -272,6 +296,7 @@ func get_tip_text() -> String:
 func _on_twist_popup_dismissed() -> void:
 	if _state == State.INTRO:
 		_state = State.PLAYING
+		_announce_moves()
 		_schedule_hand()
 		_play_sound(Feedback.Sound.BUTTON)
 
@@ -283,6 +308,8 @@ func _overline_for(level: LevelData) -> String:
 		return "MASTER LEVEL"
 	if level.is_challenge:
 		return "VAULT CHALLENGE"
+	if level.is_extreme:
+		return "EXTREME LEVEL"
 	return level.title.to_upper()
 
 
@@ -317,6 +344,9 @@ func resume() -> void:
 
 ## Android back button. Returns true when handled here.
 func handle_back() -> bool:
+	if _hint_offer.visible:
+		_hint_offer.close()
+		return true
 	match _state:
 		State.OUT_OF_MOVES:
 			restart()
@@ -410,6 +440,59 @@ func set_hint_store(store: HintStore) -> void:
 	_update_hint_button()
 
 
+## The screen washes light red for a moment: a counted wrong move.
+func _flash_wrong() -> void:
+	if _wrong_flash_tween != null and _wrong_flash_tween.is_valid():
+		_wrong_flash_tween.kill()
+	_wrong_flash.modulate.a = 0.0
+	_wrong_flash_tween = create_tween()
+	_wrong_flash_tween.tween_property(_wrong_flash, "modulate:a", WRONG_FLASH_PEAK, WRONG_FLASH_SECONDS * 0.3).set_trans(Tween.TRANS_SINE)
+	_wrong_flash_tween.tween_property(_wrong_flash, "modulate:a", 0.0, WRONG_FLASH_SECONDS * 0.7).set_trans(Tween.TRANS_SINE)
+
+
+func get_wrong_flash() -> ColorRect:
+	return _wrong_flash
+
+
+## Out of hints: offer one for a short video (pauses play while open).
+func _open_hint_offer() -> void:
+	_state = State.PAUSED
+	var video_ready := _ads != null and _ads.is_available()
+	if not _hints.can_earn_from_ad():
+		_hint_offer.open(false, "You've used today's videos. More hints tomorrow.")
+	elif not video_ready:
+		_hint_offer.open(false, "No video available right now. Try again later.")
+	else:
+		_hint_offer.open(true)
+	_play_sound(Feedback.Sound.BUTTON)
+
+
+func get_hint_offer() -> HintOfferPanel:
+	return _hint_offer
+
+
+func _on_hint_video_requested() -> void:
+	if _ads == null or not _ads.is_available():
+		_hint_offer.show_unavailable()
+		return
+	_ads.finished.connect(_on_hint_video_finished, CONNECT_ONE_SHOT)
+	_ads.show_ad()
+
+
+## Only a fully watched video gives the hint, saved at once.
+func _on_hint_video_finished(rewarded: bool) -> void:
+	if not rewarded or _hints == null or not _hints.earn_from_ad():
+		_hint_offer.show_unavailable()
+		return
+	_hint_offer.close()
+	_play_sound(Feedback.Sound.UNLOCK)
+
+
+func _on_hint_offer_closed() -> void:
+	if _state == State.PAUSED and not _pause_panel.visible:
+		_state = State.PLAYING
+
+
 func _on_hints_changed(_count: int) -> void:
 	_update_hint_button()
 
@@ -433,10 +516,7 @@ func use_hint() -> void:
 	if board == null:
 		return
 	if _hints.get_hints() <= 0:
-		var highest := _progress.get_highest_completed_level() if _progress != null else 0
-		var wait := _hints.levels_until_free_hint(highest)
-		_praise_popup.show_praise("No hints left · free one in %d %s" % [wait, "level" if wait == 1 else "levels"] if wait > 0 else "No hints left")
-		_play_sound(Feedback.Sound.BLOCKED, 0.85)
+		_open_hint_offer()
 		return
 	var id := HintFinder.best_arrow(board)
 	if id == -1:
@@ -490,6 +570,7 @@ func _on_arrow_exited(arrow: Arrow) -> void:
 
 func _on_wrong_tap() -> void:
 	_wrong_taps += 1
+	_flash_wrong()
 	_release_streak.reset()
 	_play_sound(Feedback.Sound.BLOCKED)
 	if _feedback != null:
@@ -553,8 +634,11 @@ func _update_moves() -> void:
 	# Only a spacer now (pushes moves and the hint to the right): always on.
 	_moves_divider.visible = true
 	var remaining := _move_budget.remaining()
+	# Only this level's keys are shown (1 to 3, more after a +1 video).
+	var shown := maxi(_move_budget.limit, remaining)
 	for index: int in _pips.get_child_count():
 		var key := _pips.get_child(index) as TextureRect
+		key.visible = index < shown
 		var spent := index >= remaining
 		if spent and key.texture == KEY_FULL:
 			key.pivot_offset = key.size * 0.5
@@ -565,6 +649,19 @@ func _update_moves() -> void:
 		elif not spent:
 			key.texture = KEY_FULL
 			key.scale = Vector2.ONE
+
+
+## Levels with fewer than 3 wrong moves say so as play begins.
+func _announce_moves() -> void:
+	if not _move_budget.enabled or _move_budget.limit >= WrongMoveBudget.DEFAULT_LIMIT:
+		return
+	var count := _move_budget.limit
+	_praise_popup.show_praise("Only %d %s!" % [count, "move" if count == 1 else "moves"])
+
+
+## Keys shown in the counters row.
+func get_status_key_count() -> int:
+	return _pips.get_children().filter(func(key: Node) -> bool: return (key as CanvasItem).visible).size()
 
 
 func get_move_budget() -> WrongMoveBudget:
@@ -667,6 +764,7 @@ func _count_locked(board: BoardState) -> int:
 
 
 func _close_overlays() -> void:
+	_hint_offer.hide()
 	_twist_popup.close()
 	_out_of_moves_panel.close()
 	_board_view.visible = true

@@ -19,6 +19,8 @@ extends Control
 @export var daily_path: String = DailyStore.DEFAULT_PATH
 @export var weekly_path: String = WeeklyStore.DEFAULT_PATH
 @export var hints_path: String = HintStore.DEFAULT_PATH
+@export var profile_path: String = ProfileStore.DEFAULT_PATH
+@export var profile_screen_scene: PackedScene
 @export var weekly_screen_scene: PackedScene
 ## Pins "today" for tests (e.g. "2026-11-24"); empty means the device date.
 @export var daily_date_override: String = ""
@@ -41,6 +43,7 @@ var _feedback: Feedback
 var _daily: DailyStore
 var _weekly: WeeklyStore
 var _hints: HintStore
+var _profile: ProfileStore
 var _ads: RewardedAds
 
 
@@ -56,6 +59,8 @@ func _ready() -> void:
 	_weekly.load_results()
 	_hints = HintStore.new(hints_path)
 	_hints.load_hints()
+	_profile = ProfileStore.new(profile_path)
+	_profile.load_profile()
 	_daily = DailyStore.new(daily_path)
 	_daily.load_results()
 	_feedback = Feedback.new()
@@ -101,10 +106,11 @@ func show_home() -> void:
 	screen.set_daily_status(_daily_status(), _daily_detail())
 	var week := WeeklyChallenge.week_key(get_today())
 	screen.set_weekly_progress(_weekly.solved_count(week), WeeklyChallenge.PUZZLES, WeeklyChallenge.days_left(get_today()))
-	screen.themes_requested.connect(open_settings)
 	screen.weekly_requested.connect(show_weekly)
 	screen.set_rewards(_achievements)
-	screen.rewards_requested.connect(show_achievements)
+	var points := _progress.get_points()
+	screen.set_profile(_profile.player_name, ProfileItems.resolve(ProfileItems.AVATARS, _profile.avatar_id, points, _achievements)["id"], ProfileItems.resolve(ProfileItems.FRAMES, _profile.frame_id, points, _achievements)["id"])
+	screen.profile_requested.connect(show_profile)
 	screen.play_requested.connect(show_game)
 	screen.settings_requested.connect(open_settings)
 	screen.daily_requested.connect(show_daily)
@@ -121,7 +127,21 @@ func show_achievements() -> void:
 	if screen == null:
 		return
 	screen.setup(_achievements)
+	screen.back_requested.connect(show_profile)
+
+
+## Name, avatar, frame, Achievements and social login.
+func show_profile() -> void:
+	var screen := _show_screen(profile_screen_scene) as ProfileScreen
+	if screen == null:
+		return
+	screen.setup(_profile, _progress.get_points(), _achievements)
 	screen.back_requested.connect(show_home)
+	screen.achievements_requested.connect(show_achievements)
+
+
+func get_profile() -> ProfileStore:
+	return _profile
 
 
 func show_daily() -> void:

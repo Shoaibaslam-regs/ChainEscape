@@ -25,3 +25,7 @@ credits is a kind gesture.
 | B | swish_2.wav | Battle Sound Effects | https://opengameart.org/content/battle-sound-effects |
 | C, E | swish-7.wav | Swishes Sound Pack (CC0) | https://opengameart.org/content/swishes-sound-pack |
 | D | swish-9.wav | Swishes Sound Pack (CC0) | https://opengameart.org/content/swishes-sound-pack |
+
+**2026-11-26:** the game now ships November Snow as `assets/audio/music_november_snow.ogg`
+(Ogg Vorbis, about 110 kbps, 4.7 MB), re-encoded from the original 320 kbps MP3 (14 MB,
+still in git history) to make the app smaller. Same track, same CC0 licence.
